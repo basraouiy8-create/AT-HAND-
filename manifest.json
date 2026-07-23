@@ -1,0 +1,15 @@
+{
+  "name": "Wardrobe",
+  "short_name": "Wardrobe",
+  "description": "Your wardrobe, outfits, cycle, calendar and journal in one place.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f3f0",
+  "theme_color": "#b5654a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
