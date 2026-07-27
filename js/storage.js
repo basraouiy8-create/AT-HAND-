@@ -17,15 +17,31 @@ function defaultDB() {
       theme: "system",
       pinEnabled: false,
       pin: null,
-      hideCycleTab: false
+      hideCycleTab: false,
+      notificationsEnabled: false
     },
     unlocked: false,
+    cycleProfile: null,
     items: [],
     outfits: [],
     cycleEntries: [],
     events: [],
-    journalEntries: []
+    journalEntries: [],
+    tasks: [],
+    habits: [],
+    firedReminders: []
   };
+}
+
+function migrateItem(item) {
+  if (!item.categoryGroup) {
+    const oldCat = item.category || "top";
+    if (oldCat === "shoes") { item.categoryGroup = "shoes"; item.subCategory = "sneakers"; }
+    else if (oldCat === "bag") { item.categoryGroup = "accessories"; item.subCategory = "handbag"; }
+    else if (oldCat === "accessory") { item.categoryGroup = "accessories"; item.subCategory = "necklace"; }
+    else { item.categoryGroup = "parts"; item.subCategory = oldCat; }
+  }
+  return item;
 }
 
 const Store = {
@@ -42,6 +58,7 @@ const Store = {
     } else {
       this.data = defaultDB();
     }
+    this.data.items.forEach(migrateItem);
     return this.data;
   },
 

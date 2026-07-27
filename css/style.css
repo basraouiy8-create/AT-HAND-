@@ -258,6 +258,65 @@ input[type="checkbox"] { width: auto; }
   grid-template-columns: repeat(2, 1fr);
   gap: 10px;
 }
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+}
+.gallery-cell {
+  cursor: pointer;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.gallery-cell img, .gallery-cell .item-photo-ph {
+  border-radius: 4px;
+}
+.swatch-chip {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  display: inline-block;
+}
+.swatch-chip.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.cycle-ring {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.toast {
+  position: fixed;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--bg);
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  max-width: 90%;
+  text-align: center;
+  z-index: 100;
+  box-shadow: var(--shadow);
+}
+.cycle-ring-inner {
+  width: 130px;
+  height: 130px;
+  border-radius: 50%;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
 .item-card {
   background: var(--surface);
   border-radius: var(--radius);
@@ -265,7 +324,7 @@ input[type="checkbox"] { width: auto; }
   border: 1px solid var(--border);
   cursor: pointer;
 }
-.item-card img, .item-photo-ph {
+.item-card img, .gallery-cell img, .item-photo-ph {
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;

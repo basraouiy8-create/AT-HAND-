@@ -1,10 +1,20 @@
 let state = {
   tab: "dashboard",
-  wrFilter: { category: "", season: "", occasion: "", q: "" },
+  wrFilter: { group: "", sub: "", season: "", activity: "", color: "", q: "" },
+  wrFiltersOpen: false,
+  wrStatsOpen: false,
+  wrView: "list",
+  otView: "mine",
+  otSuggestOcc: "",
+  otSuggestedId: null,
+  cyHistoryOpen: false,
+  cyEducationOpen: false,
+  cyLogStep: 0,
   calMonth: new Date().getMonth(),
   calYear: new Date().getFullYear(),
   calOverlayCycle: false,
   jrQuery: "",
+  jrView: "diary",
   pinBuffer: "",
   pinMode: null // 'unlock' | 'setup'
 };
@@ -16,6 +26,52 @@ function init() {
   I18N.setLang(Store.data.settings.lang || "en");
   applyTheme();
   render();
+  checkReminders();
+  setInterval(checkReminders, 60000);
+}
+
+const REMINDER_OFFSETS = [
+  { key: "2d", ms: 2 * 24 * 60 * 60 * 1000 },
+  { key: "1d", ms: 24 * 60 * 60 * 1000 },
+  { key: "2h", ms: 2 * 60 * 60 * 1000 }
+];
+
+function checkReminders() {
+  if (!Store.data.settings.notificationsEnabled) return;
+  const now = Date.now();
+  let changed = false;
+  Store.data.events.forEach((e) => {
+    const eventTime = e.time || "09:00";
+    const eventMs = new Date(`${e.date}T${eventTime}:00`).getTime();
+    if (isNaN(eventMs)) return;
+    REMINDER_OFFSETS.forEach((off) => {
+      const key = `${e.id}_${off.key}`;
+      if (Store.data.firedReminders.includes(key)) return;
+      const triggerMs = eventMs - off.ms;
+      if (now >= triggerMs && now < eventMs) {
+        fireReminder(e, off.key);
+        Store.data.firedReminders.push(key);
+        changed = true;
+      }
+    });
+  });
+  if (changed) Store.save();
+}
+
+function fireReminder(event, offsetKey) {
+  const msg = t("cal_reminder_" + offsetKey, { title: event.title });
+  showToast(msg);
+  if (window.Notification && Notification.permission === "granted") {
+    try { new Notification(t("app_name"), { body: msg }); } catch (e) { /* ignore */ }
+  }
+}
+
+function showToast(msg) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 6000);
 }
 
 function applyTheme() {
@@ -56,7 +112,7 @@ function handleAction(action, id, el, e) {
       if (e.target === el) closeModal();
       break;
     case "switch-tab": switchTab(el.getAttribute("data-tab")); break;
-    case "toggle-theme": openThemeMenu(); break;
+    case "toggle-theme": toggleThemeQuick(); break;
     case "toggle-lang":
       I18N.setLang(I18N.lang === "en" ? "fr" : "en");
       Store.data.settings.lang = I18N.lang;
@@ -73,19 +129,31 @@ function handleAction(action, id, el, e) {
     case "mark-item-worn": markItemWorn(id); break;
     case "set-item-status": setItemStatus(id, el.value !== undefined ? el.value : el.getAttribute("data-status")); break;
     case "wr-filter-chip": setWrFilter(el.getAttribute("data-key"), el.getAttribute("data-value")); break;
+    case "wr-filter-subchip": setWrSubFilter(el.getAttribute("data-group"), el.getAttribute("data-sub")); break;
+    case "wr-toggle-filters": wrToggleFilters(); break;
+    case "wr-toggle-stats": wrToggleStats(); break;
+    case "wr-toggle-view": wrToggleView(); break;
 
-    case "open-add-outfit": openOutfitModal(); break;
+    case "open-add-outfit": openOutfitModal(el.getAttribute("data-source")); break;
     case "open-outfit-detail": openOutfitDetail(id); break;
-    case "save-outfit": saveOutfit(); break;
+    case "save-outfit": saveOutfit(el.getAttribute("data-source")); break;
     case "delete-outfit": deleteOutfit(id); break;
     case "toggle-outfit-favorite": toggleOutfitFavorite(id); break;
     case "outfit-mark-worn": outfitMarkWorn(id); break;
-    case "outfit-suggest-random": suggestRandomOutfit(); break;
     case "outfit-link-event": linkOutfitToEvent(id, el.value); break;
+    case "ot-set-view": otSetView(el.getAttribute("data-view")); break;
+    case "ot-suggest-filter": otSuggestFilter(el.getAttribute("data-occ")); break;
+    case "ot-suggest-shuffle": otRecomputeSuggestion(); render(); break;
 
     case "cy-log-day": openCycleLogModal(); break;
+    case "cy-log-next": cyLogNext(); break;
+    case "cy-log-prev": cyLogPrev(); break;
     case "cy-save-day": saveCycleDay(); break;
     case "cy-delete-entry": deleteCycleEntry(id); break;
+    case "cy-toggle-history": cyToggleHistory(); break;
+    case "cy-toggle-education": state.cyEducationOpen = !state.cyEducationOpen; render(); break;
+    case "cy-open-profile": openCycleProfileModal(); break;
+    case "cy-save-profile": saveCycleProfile(); break;
     case "cy-pin-key": pinKeyPress(el.getAttribute("data-key")); break;
     case "cy-unlock-attempt": break;
 
@@ -101,11 +169,22 @@ function handleAction(action, id, el, e) {
     case "save-journal": saveJournal(); break;
     case "delete-journal": deleteJournal(id); break;
     case "jr-mood": selectJournalMood(el.getAttribute("data-mood")); break;
+    case "jr-set-view": jrSetView(el.getAttribute("data-view")); break;
+    case "open-add-task": openTaskModal(); break;
+    case "save-task": saveTask(); break;
+    case "task-bump-progress": taskBumpProgress(id); break;
+    case "task-toggle-done": taskToggleDone(id); break;
+    case "delete-task": deleteTask(id); break;
+    case "open-add-habit": openHabitModal(); break;
+    case "save-habit": saveHabit(); break;
+    case "habit-toggle-day": toggleHabitDay(id, el.getAttribute("data-date")); break;
+    case "delete-habit": deleteHabit(id); break;
 
     case "set-lang": setLanguage(el.getAttribute("data-lang")); break;
     case "set-theme-choice": setThemeChoice(el.getAttribute("data-theme")); break;
     case "save-profile": saveProfile(); break;
     case "toggle-pin-enable": togglePinEnable(); break;
+    case "toggle-notifications": toggleNotifications(); break;
     case "save-pin": savePin(); break;
     case "export-data": exportData(); break;
     case "erase-data": eraseData(); break;
@@ -134,7 +213,7 @@ function renderTopbar() {
     <h1>${titles[state.tab] || t("app_name")}</h1>
     <div class="topbar-actions">
       <button class="icon-btn" data-action="toggle-lang" title="Language">${I18N.lang.toUpperCase()}</button>
-      <button class="icon-btn" data-action="toggle-theme" title="Theme">🌓</button>
+      <button class="icon-btn" data-action="toggle-theme" title="Theme">${Store.data.settings.theme === "dark" ? "🌙" : Store.data.settings.theme === "light" ? "☀️" : "🌓"}</button>
     </div>
   </div>`;
 }
@@ -158,12 +237,21 @@ function renderTabbar() {
 }
 
 function renderFab() {
+  if (state.tab === "outfits") {
+    if (state.otView === "suggested") return "";
+    const source = state.otView === "web" ? "web" : "wardrobe";
+    return `<button class="fab" data-action="open-add-outfit" data-source="${source}">+</button>`;
+  }
+  if (state.tab === "journal") {
+    if (isLocked("journal")) return "";
+    const action = state.jrView === "tasks" ? "open-add-task" : state.jrView === "habits" ? "open-add-habit" : "open-add-journal";
+    return `<button class="fab" data-action="${action}">+</button>`;
+  }
   const map = {
-    wardrobe: "open-add-item", outfits: "open-add-outfit", journal: "open-add-journal"
+    wardrobe: "open-add-item"
   };
   const action = map[state.tab];
   if (!action) return "";
-  if (state.tab === "journal" && isLocked("journal")) return "";
   return `<button class="fab" data-action="${action}">+</button>`;
 }
 
@@ -211,8 +299,8 @@ function renderDashboard() {
   const todayEvents = d.events.filter(e => e.date === today);
   const neverWorn = d.items.filter(i => !i.wornDates || i.wornDates.length === 0).length;
   const monthsTracked = new Set(d.cycleEntries.map(e => e.date.slice(0, 7))).size;
-  const suggested = d.outfits.length ? d.outfits[Math.floor(Math.random() * d.outfits.length)] : null;
-  const cyclePhase = d.cycleEntries.length ? computeCyclePhase(today) : null;
+  const suggested = getSuggestedOutfit("");
+  const cyclePhase = (d.cycleEntries.length || d.cycleProfile) ? computeCyclePhase(today) : null;
 
   return `
   <div class="stat-grid">
@@ -236,44 +324,97 @@ function renderDashboard() {
 }
 
 // ================= WARDROBE =================
-const CATEGORIES = ["top", "bottom", "dress", "shoes", "bag", "accessory", "outerwear"];
+const PARTS = ["top", "bottom", "dress", "outerwear"];
+const SHOE_TYPES = ["sandals", "sneakers", "heels"];
+const ACCESSORY_TYPES = ["necklace", "earrings", "bracelet", "ring", "pin", "hat", "hairtie", "headband", "watch", "handbag", "belt"];
+const CATEGORY_GROUPS = ["parts", "shoes", "accessories"];
+const COLORS = [
+  ["black", "#000000"], ["white", "#ffffff"], ["grey", "#9e9e9e"], ["red", "#e53935"],
+  ["orange", "#fb8c00"], ["yellow", "#fdd835"], ["green", "#43a047"], ["olive", "#808000"],
+  ["teal", "#00897b"], ["blue", "#1e88e5"], ["navy", "#1a237e"], ["turquoise", "#1de9b6"],
+  ["purple", "#8e24aa"], ["lavender", "#b39ddb"], ["pink", "#f06292"], ["magenta", "#d81b60"],
+  ["brown", "#6d4c41"], ["beige", "#e8d9c5"], ["cream", "#fff8e1"], ["gold", "#d4af37"],
+  ["silver", "#c0c0c0"], ["khaki", "#c3b091"]
+];
 const SEASONS = ["all", "spring", "summer", "autumn", "winter"];
 const OCCASIONS = ["daily", "work", "sport", "party"];
 const STATUSES = ["available", "laundry", "lent", "lost", "given"];
 
+function subTypesForGroup(group) {
+  if (group === "shoes") return SHOE_TYPES;
+  if (group === "accessories") return ACCESSORY_TYPES;
+  return PARTS;
+}
+function subTypeLabel(group, sub) {
+  if (group === "shoes") return t("wr_shoe_" + sub);
+  if (group === "accessories") return t("wr_acc_" + sub);
+  return t("wr_cat_" + sub);
+}
+function itemCategoryLabel(item) {
+  const group = item.categoryGroup || "parts";
+  const sub = item.subCategory || "top";
+  return subTypeLabel(group, sub);
+}
+function wrFilteredItems() {
+  let items = Store.data.items.slice();
+  const f = state.wrFilter;
+  if (f.group) items = items.filter(i => (i.categoryGroup || "parts") === f.group && (!f.sub || i.subCategory === f.sub));
+  if (f.season) items = items.filter(i => i.season === f.season);
+  if (f.activity) items = items.filter(i => (i.tags || []).includes(f.activity));
+  if (f.color) items = items.filter(i => i.color === f.color);
+  if (f.q) items = items.filter(i => JSON.stringify(i).toLowerCase().includes(f.q.toLowerCase()));
+  return items;
+}
+
 function renderWardrobe() {
   const d = Store.data;
-  let items = d.items.slice();
+  const items = wrFilteredItems();
   const f = state.wrFilter;
-  if (f.category) items = items.filter(i => i.category === f.category);
-  if (f.season) items = items.filter(i => i.season === f.season);
-  if (f.occasion) items = items.filter(i => (i.tags || []).includes(f.occasion) || i.occasion === f.occasion);
-  if (f.q) items = items.filter(i => JSON.stringify(i).toLowerCase().includes(f.q.toLowerCase()));
-
   const favCount = d.items.filter(i => i.favorite).length;
   const neverCount = d.items.filter(i => !i.wornDates || !i.wornDates.length).length;
   const recentCount = d.items.filter(i => i.wornDates && i.wornDates.length && daysBetween(i.wornDates[i.wornDates.length - 1], todayISO()) <= 7).length;
 
   return `
-  <input type="text" placeholder="${t("common_search")}" value="${escapeHtml(f.q)}" oninput="state.wrFilter.q=this.value; renderWardrobeList();" style="margin-bottom:10px" />
-  <div class="chip-group" style="margin-bottom:10px">
-    ${CATEGORIES.map(c => `<span class="chip ${f.category === c ? "selected" : ""}" data-action="wr-filter-chip" data-key="category" data-value="${c}">${t("wr_cat_" + c)}</span>`).join("")}
+  <div class="row-between" style="gap:8px;margin-bottom:10px">
+    <input type="text" placeholder="${t("common_search")}" value="${escapeHtml(f.q)}" oninput="state.wrFilter.q=this.value; renderWardrobeList();" style="flex:1" />
+    <button class="icon-btn" data-action="wr-toggle-filters" title="${t("wr_filter_toggle")}">${state.wrFiltersOpen ? "▲" : "▽"}</button>
+    <button class="icon-btn" data-action="wr-toggle-view" title="${state.wrView === "gallery" ? t("wr_view_list") : t("wr_view_gallery")}">${state.wrView === "gallery" ? "▦" : "🖼️"}</button>
   </div>
-  <div class="chip-group" style="margin-bottom:10px">
-    ${SEASONS.map(s => `<span class="chip ${f.season === s ? "selected" : ""}" data-action="wr-filter-chip" data-key="season" data-value="${s}">${t("wr_season_" + s)}</span>`).join("")}
-  </div>
-  <div class="chip-group" style="margin-bottom:14px">
-    ${OCCASIONS.map(o => `<span class="chip ${f.occasion === o ? "selected" : ""}" data-action="wr-filter-chip" data-key="occasion" data-value="${o}">${t("wr_occasion_" + o)}</span>`).join("")}
-  </div>
-  <div class="card">
-    <h3>${t("wr_stats_title")}</h3>
-    <div class="stat-grid mb-0">
+  ${state.wrFiltersOpen ? renderWrFilterPanel() : ""}
+  <div class="card" data-action="wr-toggle-stats" style="cursor:pointer">
+    <div class="row-between mb-0"><h3 class="mb-0">${t("wr_stats_title")}</h3><span>${state.wrStatsOpen ? "▾" : "▸"}</span></div>
+    ${state.wrStatsOpen ? `
+    <div class="stat-grid mb-0" style="margin-top:10px">
       <div class="stat-card"><div class="num">${favCount}</div><div class="label">${t("wr_stats_favorites")}</div></div>
       <div class="stat-card"><div class="num">${recentCount}</div><div class="label">${t("wr_stats_recent")}</div></div>
       <div class="stat-card"><div class="num">${neverCount}</div><div class="label">${t("wr_stats_never")}</div></div>
-    </div>
+    </div>` : ""}
   </div>
-  <div id="wr-list">${renderWardrobeGrid(items)}</div>`;
+  <div id="wr-list">${state.wrView === "gallery" ? renderWardrobeGallery(items) : renderWardrobeGrid(items)}</div>`;
+}
+
+function renderWrFilterPanel() {
+  const f = state.wrFilter;
+  return `<div class="card" style="margin-bottom:10px">
+    <div class="field"><label>${t("wr_group_parts")}</label>
+      <div class="chip-group">${PARTS.map(s => `<span class="chip ${f.group === "parts" && f.sub === s ? "selected" : ""}" data-action="wr-filter-subchip" data-group="parts" data-sub="${s}">${t("wr_cat_" + s)}</span>`).join("")}</div>
+    </div>
+    <div class="field"><label>${t("wr_season")}</label>
+      <div class="chip-group">${SEASONS.filter(s => s !== "all").map(s => `<span class="chip ${f.season === s ? "selected" : ""}" data-action="wr-filter-chip" data-key="season" data-value="${s}">${t("wr_season_" + s)}</span>`).join("")}</div>
+    </div>
+    <div class="field"><label>${t("wr_filter_activity")}</label>
+      <div class="chip-group">${OCCASIONS.map(o => `<span class="chip ${f.activity === o ? "selected" : ""}" data-action="wr-filter-chip" data-key="activity" data-value="${o}">${t("wr_occasion_" + o)}</span>`).join("")}</div>
+    </div>
+    <div class="field"><label>${t("wr_filter_colors")}</label>
+      <div class="chip-group">${COLORS.map(([c, hex]) => `<span class="swatch-chip ${f.color === c ? "selected" : ""}" data-action="wr-filter-chip" data-key="color" data-value="${c}" style="background:${hex}" title="${t("wr_color_" + c)}"></span>`).join("")}</div>
+    </div>
+    <div class="field"><label>${t("wr_group_shoes")}</label>
+      <div class="chip-group">${SHOE_TYPES.map(s => `<span class="chip ${f.group === "shoes" && f.sub === s ? "selected" : ""}" data-action="wr-filter-subchip" data-group="shoes" data-sub="${s}">${t("wr_shoe_" + s)}</span>`).join("")}</div>
+    </div>
+    <div class="field mb-0"><label>${t("wr_group_accessories")}</label>
+      <div class="chip-group">${ACCESSORY_TYPES.map(s => `<span class="chip ${f.group === "accessories" && f.sub === s ? "selected" : ""}" data-action="wr-filter-subchip" data-group="accessories" data-sub="${s}">${t("wr_acc_" + s)}</span>`).join("")}</div>
+    </div>
+  </div>`;
 }
 
 function renderWardrobeGrid(items) {
@@ -282,49 +423,67 @@ function renderWardrobeGrid(items) {
     <div class="item-card" data-action="open-edit-item" data-id="${i.id}">
       ${photoOrPh(i.photo, "👕")}
       <div class="item-info">
-        <div class="name">${escapeHtml(i.brand || t("wr_cat_" + i.category))}</div>
-        <div class="meta">${t("wr_cat_" + i.category)} · ${escapeHtml(i.color || "")}</div>
+        <div class="name">${escapeHtml(i.brand || itemCategoryLabel(i))}</div>
+        <div class="meta">${itemCategoryLabel(i)}${i.color ? " · " + t("wr_color_" + i.color) : ""}</div>
         <span class="badge">${i.wornDates && i.wornDates.length ? t("wr_times_worn", { n: i.wornDates.length }) : t("wr_never_worn")}</span>
       </div>
     </div>`).join("")}</div>`;
 }
 
+function renderWardrobeGallery(items) {
+  if (!items.length) return `<div class="empty-state"><span class="ico">🖼️</span>${t("wr_empty")}</div>`;
+  return `<div class="gallery-grid">${items.map(i => `
+    <div class="gallery-cell" data-action="open-edit-item" data-id="${i.id}">${photoOrPh(i.photo, "👕")}</div>`).join("")}</div>`;
+}
+
+function wrToggleFilters() { state.wrFiltersOpen = !state.wrFiltersOpen; render(); }
+function wrToggleStats() { state.wrStatsOpen = !state.wrStatsOpen; render(); }
+function wrToggleView() { state.wrView = state.wrView === "gallery" ? "list" : "gallery"; render(); }
+function setWrSubFilter(group, sub) {
+  const f = state.wrFilter;
+  if (f.group === group && f.sub === sub) { f.group = ""; f.sub = ""; }
+  else { f.group = group; f.sub = sub; }
+  render();
+}
 function setWrFilter(key, value) {
   state.wrFilter[key] = state.wrFilter[key] === value ? "" : value;
   render();
 }
 function renderWardrobeList() {
-  const d = Store.data;
-  let items = d.items.slice();
-  const f = state.wrFilter;
-  if (f.category) items = items.filter(i => i.category === f.category);
-  if (f.season) items = items.filter(i => i.season === f.season);
-  if (f.occasion) items = items.filter(i => (i.tags || []).includes(f.occasion) || i.occasion === f.occasion);
-  if (f.q) items = items.filter(i => JSON.stringify(i).toLowerCase().includes(f.q.toLowerCase()));
-  document.getElementById("wr-list").innerHTML = renderWardrobeGrid(items);
+  const items = wrFilteredItems();
+  document.getElementById("wr-list").innerHTML = state.wrView === "gallery" ? renderWardrobeGallery(items) : renderWardrobeGrid(items);
 }
 
 function openItemModal(id) {
   const item = id ? Store.data.items.find(i => i.id === id) : null;
+  const initGroup = item ? (item.categoryGroup || "parts") : "parts";
+  const initSub = item ? (item.subCategory || "top") : "top";
   openModal(`
     <div class="modal-header"><h2>${item ? t("common_edit") : t("wr_add_item")}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
     <div class="photo-upload" id="photo-upload-box">
       ${item && item.photo ? `<img src="${item.photo}" id="photo-preview">` : `<div id="photo-preview-ph">📷 ${t("common_choose_photo")}</div>`}
       <input type="file" accept="image/*" id="f-photo-input">
     </div>
-    <div class="field"><label>${t("wr_category")}</label>
-      <select id="f-category">${CATEGORIES.map(c => `<option value="${c}" ${item && item.category === c ? "selected" : ""}>${t("wr_cat_" + c)}</option>`).join("")}</select>
+    <div class="grid-2">
+      <div class="field"><label>${t("wr_type")}</label>
+        <select id="f-group">${CATEGORY_GROUPS.map(g => `<option value="${g}" ${initGroup === g ? "selected" : ""}>${t("wr_group_" + g)}</option>`).join("")}</select>
+      </div>
+      <div class="field"><label>${t("wr_subtype")}</label>
+        <select id="f-sub">${subTypesForGroup(initGroup).map(s => `<option value="${s}" ${initSub === s ? "selected" : ""}>${subTypeLabel(initGroup, s)}</option>`).join("")}</select>
+      </div>
+    </div>
+    <div class="field"><label>${t("wr_color")}</label>
+      <div class="chip-group" id="f-color-picker">${COLORS.map(([c, hex]) => `<span class="swatch-chip ${item && item.color === c ? "selected" : ""}" data-color="${c}" style="background:${hex}" title="${t("wr_color_" + c)}"></span>`).join("")}</div>
     </div>
     <div class="grid-2">
-      <div class="field"><label>${t("wr_color")}</label><input id="f-color" value="${escapeHtml(item ? item.color : "")}"></div>
       <div class="field"><label>${t("wr_material")}</label><input id="f-material" value="${escapeHtml(item ? item.material : "")}"></div>
+      <div class="field"><label>${t("wr_brand")}</label><input id="f-brand" value="${escapeHtml(item ? item.brand : "")}"></div>
     </div>
     <div class="grid-2">
-      <div class="field"><label>${t("wr_brand")}</label><input id="f-brand" value="${escapeHtml(item ? item.brand : "")}"></div>
       <div class="field"><label>${t("wr_size")}</label><input id="f-size" value="${escapeHtml(item ? item.size : "")}"></div>
-    </div>
-    <div class="field"><label>${t("wr_season")}</label>
-      <select id="f-season">${SEASONS.map(s => `<option value="${s}" ${item && item.season === s ? "selected" : ""}>${t("wr_season_" + s)}</option>`).join("")}</select>
+      <div class="field"><label>${t("wr_season")}</label>
+        <select id="f-season">${SEASONS.map(s => `<option value="${s}" ${item && item.season === s ? "selected" : ""}>${t("wr_season_" + s)}</option>`).join("")}</select>
+      </div>
     </div>
     <div class="grid-2">
       <div class="field"><label>${t("wr_purchase_date")}</label><input type="date" id="f-purchase" value="${item ? item.purchaseDate || "" : ""}"></div>
@@ -355,14 +514,30 @@ function openItemModal(id) {
     }
   });
   window.__pendingPhoto = () => pendingPhoto;
+
+  let selectedColor = item ? item.color || "" : "";
+  document.querySelectorAll("#f-color-picker .swatch-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      document.querySelectorAll("#f-color-picker .swatch-chip").forEach((c) => c.classList.remove("selected"));
+      chip.classList.add("selected");
+      selectedColor = chip.getAttribute("data-color");
+    });
+  });
+  window.__getSelectedColor = () => selectedColor;
+
+  document.getElementById("f-group").addEventListener("change", function () {
+    const group = this.value;
+    document.getElementById("f-sub").innerHTML = subTypesForGroup(group).map((s) => `<option value="${s}">${subTypeLabel(group, s)}</option>`).join("");
+  });
 }
 
 function saveItem(id) {
   const photo = window.__pendingPhoto ? window.__pendingPhoto() : null;
   const data = {
     photo,
-    category: document.getElementById("f-category").value,
-    color: document.getElementById("f-color").value,
+    categoryGroup: document.getElementById("f-group").value,
+    subCategory: document.getElementById("f-sub").value,
+    color: window.__getSelectedColor ? window.__getSelectedColor() : "",
     material: document.getElementById("f-material").value,
     brand: document.getElementById("f-brand").value,
     size: document.getElementById("f-size").value,
@@ -408,14 +583,23 @@ function markItemWorn(id) {
 
 // ================= OUTFITS =================
 function renderOutfits() {
-  const d = Store.data;
+  const views = ["mine", "web", "suggested"];
   return `
-  <button class="btn block" style="margin-bottom:12px" data-action="outfit-suggest-random">🎲 ${t("ot_suggest_random")}</button>
-  ${d.outfits.length ? d.outfits.map(o => renderOutfitCard(o)).join("") : `<div class="empty-state"><span class="ico">🧥</span>${t("ot_empty")}</div>`}
+  <div class="chip-group" style="margin-bottom:12px">
+    ${views.map(v => `<span class="chip ${state.otView === v ? "selected" : ""}" data-action="ot-set-view" data-view="${v}">${t("ot_tab_" + v)}</span>`).join("")}
+  </div>
+  ${state.otView === "suggested" ? renderOutfitSuggestedView() : renderOutfitListView(state.otView)}
   `;
 }
+
+function renderOutfitListView(view) {
+  const wanted = view === "web" ? "web" : "wardrobe";
+  const outfits = Store.data.outfits.filter(o => (o.source || "wardrobe") === wanted);
+  return outfits.length ? outfits.map(o => renderOutfitCard(o)).join("") : `<div class="empty-state"><span class="ico">🧥</span>${t("ot_empty")}</div>`;
+}
+
 function renderOutfitCard(o) {
-  const cover = o.wornLog && o.wornLog.length && o.wornLog[o.wornLog.length - 1].photo;
+  const cover = o.source === "web" ? o.webPhoto : (o.wornLog && o.wornLog.length && o.wornLog[o.wornLog.length - 1].photo);
   return `<div class="card" data-action="open-outfit-detail" data-id="${o.id}" style="cursor:pointer">
     <div class="row-between">
       <h3>${escapeHtml(o.name)} ${o.favorite ? "⭐" : ""}</h3>
@@ -426,7 +610,90 @@ function renderOutfitCard(o) {
   </div>`;
 }
 
-function openOutfitModal() {
+function otSetView(view) {
+  state.otView = view;
+  if (view === "suggested") otRecomputeSuggestion();
+  render();
+}
+function otSuggestFilter(occ) {
+  state.otSuggestOcc = occ;
+  otRecomputeSuggestion();
+  render();
+}
+function otRecomputeSuggestion() {
+  const o = getSuggestedOutfit(state.otSuggestOcc);
+  state.otSuggestedId = o ? o.id : null;
+}
+function getSuggestedOutfit(occasionFilter) {
+  let pool = Store.data.outfits.filter(o => (o.source || "wardrobe") === "wardrobe");
+  if (occasionFilter) pool = pool.filter(o => o.occasion === occasionFilter);
+  if (!pool.length) return null;
+  const scored = pool.map(o => {
+    const lastWorn = o.wornLog && o.wornLog.length ? o.wornLog[o.wornLog.length - 1].date : null;
+    const daysSince = lastWorn ? daysBetween(lastWorn, todayISO()) : 9999;
+    return { o, score: (o.favorite ? 100 : 0) + Math.min(daysSince, 60) };
+  }).sort((a, b) => b.score - a.score);
+  const topN = scored.slice(0, Math.max(1, Math.ceil(scored.length / 2)));
+  return topN[Math.floor(Math.random() * topN.length)].o;
+}
+
+function renderOutfitSuggestedView() {
+  const occ = state.otSuggestOcc || "";
+  const pool = Store.data.outfits.filter(o => (o.source || "wardrobe") === "wardrobe");
+  return `
+  <div class="chip-group" style="margin-bottom:12px">
+    <span class="chip ${occ === "" ? "selected" : ""}" data-action="ot-suggest-filter" data-occ="">${t("common_all")}</span>
+    ${OCCASIONS.map(o => `<span class="chip ${occ === o ? "selected" : ""}" data-action="ot-suggest-filter" data-occ="${o}">${t("wr_occasion_" + o)}</span>`).join("")}
+  </div>
+  ${!pool.length ? `<div class="empty-state"><span class="ico">🧥</span>${t("ot_empty")}</div>` : renderSuggestionCard()}
+  <button class="btn secondary block" style="margin-top:12px" data-action="ot-suggest-shuffle">🎲 ${t("ot_suggest_random")}</button>
+  `;
+}
+
+function renderSuggestionCard() {
+  const o = Store.data.outfits.find(x => x.id === state.otSuggestedId);
+  if (!o) return `<div class="empty-state"><span class="ico">🧥</span>${t("ot_empty")}</div>`;
+  const items = Store.data.items.filter(i => o.itemIds.includes(i.id));
+  return `<div class="card">
+    <h3>${t("ot_suggest_result")}</h3>
+    <h4 style="margin:6px 0">${escapeHtml(o.name)} ${o.favorite ? "⭐" : ""}</h4>
+    <div class="item-grid">${items.map(i => `<div class="item-card">${photoOrPh(i.photo, "👕")}</div>`).join("")}</div>
+    <div class="grid-2" style="margin-top:10px">
+      <button class="btn secondary" data-action="outfit-mark-worn" data-id="${o.id}">${t("ot_mark_worn_today")}</button>
+      <button class="btn secondary" data-action="open-outfit-detail" data-id="${o.id}">${t("common_edit")}</button>
+    </div>
+  </div>`;
+}
+
+function openOutfitModal(source) {
+  source = source === "web" ? "web" : "wardrobe";
+  if (source === "web") {
+    openModal(`
+      <div class="modal-header"><h2>${t("ot_add_web")}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
+      <div class="photo-upload" id="photo-upload-box">
+        <div id="photo-preview-ph">📷 ${t("common_choose_photo")}</div>
+        <input type="file" accept="image/*" id="f-photo-input">
+      </div>
+      <div class="field"><label>${t("ot_name")}</label><input id="f-oname"></div>
+      <div class="field"><label>${t("ot_web_link")}</label><input id="f-olink" placeholder="https://..."></div>
+      <div class="field"><label>${t("ot_occasion")}</label>
+        <select id="f-oocc">${OCCASIONS.map(o => `<option value="${o}">${t("wr_occasion_" + o)}</option>`).join("")}</select>
+      </div>
+      <button class="btn block" data-action="save-outfit" data-source="web">${t("common_save")}</button>
+    `);
+    let pendingPhoto = null;
+    document.getElementById("f-photo-input").addEventListener("change", function () {
+      if (this.files && this.files[0]) {
+        resizeImageFile(this.files[0], 900, (dataUrl) => {
+          pendingPhoto = dataUrl;
+          document.getElementById("photo-upload-box").querySelector("img, #photo-preview-ph").outerHTML = `<img src="${dataUrl}">`;
+        });
+      }
+    });
+    window.__pendingPhoto = () => pendingPhoto;
+    return;
+  }
+
   const items = Store.data.items;
   openModal(`
     <div class="modal-header"><h2>${t("ot_add_outfit")}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
@@ -436,7 +703,7 @@ function openOutfitModal() {
         ${items.map(i => `<label class="item-card" style="display:block">
           <input type="checkbox" class="f-oitem" value="${i.id}" style="position:absolute;margin:6px">
           ${photoOrPh(i.photo, "👕")}
-          <div class="item-info"><div class="name">${t("wr_cat_" + i.category)}</div></div>
+          <div class="item-info"><div class="name">${itemCategoryLabel(i)}</div></div>
         </label>`).join("") || `<p class="muted">${t("wr_empty")}</p>`}
       </div>
     </div>
@@ -453,15 +720,31 @@ function openOutfitModal() {
         </select>
       </div>
     </div>
-    <button class="btn block" data-action="save-outfit">${t("common_save")}</button>
+    <button class="btn block" data-action="save-outfit" data-source="wardrobe">${t("common_save")}</button>
   `);
 }
 
-function saveOutfit() {
+function saveOutfit(source) {
+  if (source === "web") {
+    const outfit = {
+      id: uid(),
+      name: document.getElementById("f-oname").value || "Outfit idea",
+      source: "web",
+      webPhoto: window.__pendingPhoto ? window.__pendingPhoto() : null,
+      webLink: document.getElementById("f-olink").value,
+      occasion: document.getElementById("f-oocc").value,
+      itemIds: [], favorite: false, wornLog: [], linkedEventId: null
+    };
+    Store.data.outfits.push(outfit);
+    Store.save();
+    closeModal();
+    render();
+    return;
+  }
   const name = document.getElementById("f-oname").value || "Outfit";
   const itemIds = Array.from(document.querySelectorAll(".f-oitem:checked")).map(el => el.value);
   const outfit = {
-    id: uid(), name, itemIds,
+    id: uid(), name, source: "wardrobe", itemIds,
     occasion: document.getElementById("f-oocc").value,
     weather: document.getElementById("f-oweather").value,
     favorite: false, wornLog: [], linkedEventId: null
@@ -474,11 +757,14 @@ function saveOutfit() {
 
 function openOutfitDetail(id) {
   const o = Store.data.outfits.find(x => x.id === id);
-  const items = Store.data.items.filter(i => o.itemIds.includes(i.id));
+  const isWeb = o.source === "web";
+  const items = isWeb ? [] : Store.data.items.filter(i => o.itemIds.includes(i.id));
   const upcoming = Store.data.events.filter(e => e.date >= todayISO());
   openModal(`
     <div class="modal-header"><h2>${escapeHtml(o.name)}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
-    <div class="item-grid">${items.map(i => `<div class="item-card">${photoOrPh(i.photo, "👕")}</div>`).join("")}</div>
+    ${isWeb && o.webPhoto ? `<img src="${o.webPhoto}" style="width:100%;border-radius:10px;max-height:260px;object-fit:cover;margin-bottom:10px">` : ""}
+    ${isWeb && o.webLink ? `<p><a href="${escapeHtml(o.webLink)}" target="_blank" rel="noopener noreferrer">${t("ot_open_link")}</a></p>` : ""}
+    ${!isWeb ? `<div class="item-grid">${items.map(i => `<div class="item-card">${photoOrPh(i.photo, "👕")}</div>`).join("")}</div>` : ""}
     <div class="field" style="margin-top:12px">
       <button class="btn secondary block" data-action="toggle-outfit-favorite" data-id="${o.id}">${o.favorite ? "★ " + t("common_favorite") : "☆ " + t("common_favorite")}</button>
     </div>
@@ -522,14 +808,12 @@ function linkOutfitToEvent(id, eventId) {
   o.linkedEventId = eventId || null;
   Store.save();
 }
-function suggestRandomOutfit() {
-  const d = Store.data.outfits;
-  if (!d.length) { render(); return; }
-  const pick = d[Math.floor(Math.random() * d.length)];
-  openOutfitDetail(pick.id);
-}
 
 // ================= CYCLE =================
+const CYCLE_ACTIVITIES = ["rest", "walk", "workout", "yoga", "housework"];
+const CYCLE_EFFORTS = ["minimal", "moderate", "high"];
+const SYMPTOM_KEYS = ["cramps", "fatigue", "headache", "bloating", "backpain", "sorebreasts", "cravings", "acne", "sleepissues"];
+
 function computeCycleStats() {
   const entries = Store.data.cycleEntries.filter(e => e.flow && e.flow !== "none").sort((a, b) => a.date.localeCompare(b.date));
   const periods = [];
@@ -541,13 +825,18 @@ function computeCycleStats() {
   const starts = periods.map(p => p.start);
   const cycleLengths = [];
   for (let i = 1; i < starts.length; i++) cycleLengths.push(daysBetween(starts[i - 1], starts[i]));
-  const avgCycle = cycleLengths.length ? Math.round(cycleLengths.reduce((a, b) => a + b, 0) / cycleLengths.length) : null;
-  const lastStart = starts[starts.length - 1] || null;
+  const profile = Store.data.cycleProfile;
+  let avgCycle = cycleLengths.length ? Math.round(cycleLengths.reduce((a, b) => a + b, 0) / cycleLengths.length) : null;
+  let fromProfile = false;
+  if (!avgCycle && profile && profile.avgCycleLength) { avgCycle = profile.avgCycleLength; fromProfile = true; }
+  let lastStart = starts[starts.length - 1] || null;
+  if (!lastStart && profile && profile.lastPeriodStart) { lastStart = profile.lastPeriodStart; fromProfile = true; }
   const nextPeriod = lastStart && avgCycle ? addDays(lastStart, avgCycle) : null;
   const ovulation = nextPeriod ? addDays(nextPeriod, -14) : null;
   const fertileStart = ovulation ? addDays(ovulation, -5) : null;
   const fertileEnd = ovulation ? addDays(ovulation, 1) : null;
-  return { periods, avgCycle, lastStart, nextPeriod, ovulation, fertileStart, fertileEnd };
+  const cycleDay = lastStart ? daysBetween(lastStart, todayISO()) + 1 : null;
+  return { periods, avgCycle, lastStart, nextPeriod, ovulation, fertileStart, fertileEnd, cycleDay, fromProfile };
 }
 
 function computeCyclePhase(dateISO) {
@@ -557,10 +846,16 @@ function computeCyclePhase(dateISO) {
   }
   if (!stats.lastStart) return "unknown";
   if (dateISO < stats.lastStart) return "unknown";
-  const cycleDay = daysBetween(stats.lastStart, dateISO) + 1;
   const avg = stats.avgCycle || 28;
+  const daysSinceStart = daysBetween(stats.lastStart, dateISO);
+  const cycleDay = (daysSinceStart % avg) + 1;
   const ovulationDay = avg - 14;
-  if (cycleDay <= 5) return "menstrual";
+  const periodLengths = stats.periods.map(p => daysBetween(p.start, p.end) + 1);
+  const profile = Store.data.cycleProfile;
+  const avgPeriodLength = periodLengths.length
+    ? Math.round(periodLengths.reduce((a, b) => a + b, 0) / periodLengths.length)
+    : (profile && profile.avgPeriodLength) || 5;
+  if (cycleDay <= avgPeriodLength) return "menstrual";
   if (cycleDay < ovulationDay - 2) return "follicular";
   if (cycleDay <= ovulationDay + 1) return "ovulation";
   return "luteal";
@@ -607,8 +902,25 @@ function renderCycle() {
   if (isLocked("cycle")) return renderLockScreen("cy_locked_msg");
   const stats = computeCycleStats();
   const entries = Store.data.cycleEntries.slice().sort((a, b) => b.date.localeCompare(a.date));
+  const phase = stats.lastStart ? computeCyclePhase(todayISO()) : "unknown";
+  const pct = stats.cycleDay && stats.avgCycle ? Math.min(100, Math.round((stats.cycleDay / stats.avgCycle) * 100)) : 0;
+  const ringColor = phase !== "unknown" ? `var(--cycle-${phase})` : "var(--accent)";
+
   return `
-  <button class="btn block" style="margin-bottom:12px" data-action="cy-log-day">${t("cy_log_day")}</button>
+  ${renderCycleProfileCard()}
+  <div class="card" style="text-align:center">
+    ${stats.cycleDay ? `
+      <div class="cycle-ring" style="background: conic-gradient(${ringColor} ${pct}%, var(--surface-alt) 0)">
+        <div class="cycle-ring-inner">
+          <div style="font-size:22px;font-weight:700">${stats.cycleDay}</div>
+          <div class="muted" style="font-size:11px">${phase !== "unknown" ? t("cy_phase_" + phase) : ""}</div>
+        </div>
+      </div>
+      <p class="muted" style="margin-top:10px">${t("cy_day_of_cycle", { day: stats.cycleDay })}</p>
+      ${phase !== "unknown" ? `<p class="muted" style="font-size:12px">${t("cy_phase_desc_" + phase)}</p>` : ""}
+    ` : `<p class="muted">${t("cy_not_enough_data")}</p>`}
+    <button class="btn block" style="margin-top:8px" data-action="cy-log-day">${t("cy_log_day")}</button>
+  </div>
   <div class="card">
     <h3>${t("cy_prediction")}</h3>
     ${stats.avgCycle ? `
@@ -617,14 +929,61 @@ function renderCycle() {
       <p class="muted">${t("cy_avg_cycle", { n: stats.avgCycle })}</p>
     ` : `<p class="muted">${t("cy_not_enough_data")}</p>`}
   </div>
+  ${renderLastEntryExplanation()}
   ${renderQuarterlyAnalysis()}
-  <div class="card">
-    <h3>${t("cy_history")}</h3>
-    ${entries.length ? entries.map(e => `
-      <div class="list-row">
+  ${renderCycleEducation()}
+  <div class="card" data-action="cy-toggle-history" style="cursor:pointer">
+    <div class="row-between mb-0"><h3 class="mb-0">${t("cy_toggle_history")}</h3><span>${state.cyHistoryOpen ? "▾" : "▸"}</span></div>
+    ${state.cyHistoryOpen ? (entries.length ? entries.map(e => {
+      const entryPhase = computeCyclePhase(e.date);
+      const dotColor = entryPhase !== "unknown" ? `var(--cycle-${entryPhase})` : "var(--border)";
+      return `
+      <div class="list-row" style="border-left:3px solid ${dotColor};padding-left:8px">
         <span>${fmtDate(e.date)} · ${t("cy_flow_" + e.flow)}</span>
         <button class="icon-btn" data-action="cy-delete-entry" data-id="${e.id}">✕</button>
-      </div>`).join("") : `<p class="muted">${t("cy_empty")}</p>`}
+      </div>`;
+    }).join("") : `<p class="muted">${t("cy_empty")}</p>`) : ""}
+  </div>`;
+}
+
+function renderCycleProfileCard() {
+  const p = Store.data.cycleProfile;
+  if (p) return "";
+  return `<div class="card">
+    <h3>${t("cy_profile_title")}</h3>
+    <p class="muted">${t("cy_profile_body")}</p>
+    <button class="btn block" data-action="cy-open-profile">${t("cy_profile_start")}</button>
+  </div>`;
+}
+
+function renderLastEntryExplanation() {
+  const entries = Store.data.cycleEntries.slice().sort((a, b) => b.date.localeCompare(a.date));
+  if (!entries.length) return "";
+  const e = entries[0];
+  const phase = computeCyclePhase(e.date);
+  const stats = computeCycleStats();
+  const cycleDayForEntry = stats.lastStart ? daysBetween(stats.lastStart, e.date) + 1 : null;
+  return `<div class="card">
+    <h3>${t("cy_last_entry_title")}</h3>
+    <p class="muted">${fmtDate(e.date)}${phase !== "unknown" ? ` · ${t("cy_phase_" + phase)}${cycleDayForEntry ? ` (${t("cy_day_of_cycle", { day: cycleDayForEntry })})` : ""}` : ""}</p>
+    <div class="list-row"><span>${t("cy_flow")}</span><span>${t("cy_flow_" + e.flow)}</span></div>
+    <div class="list-row"><span>${t("cy_symptoms")}</span><span>${(e.symptoms && e.symptoms.length) ? e.symptoms.map(s => t("cy_symptom_" + s)).join(", ") : t("common_none")}</span></div>
+    <div class="list-row"><span>${t("common_mood")}</span><span>${e.mood ? t("cy_mood_" + e.mood) : t("common_none")}</span></div>
+    <div class="list-row"><span>${t("cy_label_activity")}</span><span>${(e.activities && e.activities.length) ? e.activities.map(a => t("cy_activity_" + a)).join(", ") : t("common_none")}</span></div>
+    <div class="list-row"><span>${t("cy_label_effort")}</span><span>${e.effort ? t("cy_effort_" + e.effort) : t("common_none")}</span></div>
+    ${e.notes ? `<p class="muted" style="margin-top:8px">"${escapeHtml(e.notes)}"</p>` : ""}
+  </div>`;
+}
+
+function renderCycleEducation() {
+  const phases = ["menstrual", "follicular", "ovulation", "luteal"];
+  return `<div class="card" data-action="cy-toggle-education" style="cursor:pointer">
+    <div class="row-between mb-0"><h3 class="mb-0">${t("cy_edu_title")}</h3><span>${state.cyEducationOpen ? "▾" : "▸"}</span></div>
+    ${state.cyEducationOpen ? `
+      <p class="muted" style="margin-top:8px">${t("cy_edu_intro")}</p>
+      ${phases.map(p => `<p style="margin-top:8px"><strong>${t("cy_phase_" + p)}</strong> — ${t("cy_phase_desc_" + p)}</p>`).join("")}
+      <p class="muted" style="margin-top:8px">${t("cy_info_source")}</p>
+    ` : ""}
   </div>`;
 }
 
@@ -639,60 +998,162 @@ function renderQuarterlyAnalysis() {
     <h3>${t("cy_analysis_title")}</h3>
     <p class="muted">${t("cy_analysis_body")}</p>
     ${sorted.length ? sorted.map(([s, n]) => `<div class="list-row"><span>${t("cy_symptom_" + s)}</span><span>${n}</span></div>`).join("") : `<p class="muted">${t("common_empty_generic")}</p>`}
+  </div>
+  ${sorted.length ? renderSymptomInfo(sorted.map(([s]) => s)) : ""}`;
+}
+
+function renderSymptomInfo(symptomKeys) {
+  return `<div class="card">
+    <h3>${t("cy_info_title")}</h3>
+    ${symptomKeys.map(s => `<p><strong>${t("cy_symptom_" + s)}</strong> — ${t("cy_info_" + s)}</p>`).join("")}
+    <p style="margin-top:8px">🩺 ${t("cy_info_seek_care")}</p>
+    <p class="muted" style="margin-top:8px">⚠️ ${t("cy_info_disclaimer")}</p>
+    <p class="muted" style="font-size:11px">${t("cy_info_source")}</p>
   </div>`;
 }
 
-function openCycleLogModal() {
-  openModal(`
-    <div class="modal-header"><h2>${t("cy_log_day")}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
-    <div class="field"><label>${t("common_date")}</label><input type="date" id="f-cydate" value="${todayISO()}"></div>
-    <div class="field"><label>${t("cy_flow")}</label>
-      <select id="f-cyflow">
-        <option value="none">${t("cy_flow_none")}</option>
-        <option value="light">${t("cy_flow_light")}</option>
-        <option value="medium">${t("cy_flow_medium")}</option>
-        <option value="heavy">${t("cy_flow_heavy")}</option>
-      </select>
-    </div>
-    <div class="field"><label>${t("cy_symptoms")}</label>
+const MOOD_GROUPS = {
+  positive: ["joyful", "cheerful", "optimistic", "energetic", "grateful", "peaceful", "relaxed", "hopeful", "content", "calm", "excited", "playful"],
+  negative: ["anxious", "sad", "angry", "resentful", "gloomy", "depressed", "irritable", "stressed", "apathetic", "guilty", "fearful", "hostile"],
+  neutral: ["indifferent", "curious", "reflective", "nostalgic", "pensive", "bored", "confused", "tense", "restless", "melancholy"]
+};
+const CYCLE_LOG_STEPS = ["flow", "symptoms", "mood", "activity", "effort"];
+
+function openCycleLogModal(reset) {
+  if (reset !== false) {
+    state.cyLogStep = 0;
+    window.__cyDraft = { date: todayISO(), flow: "none", symptoms: [], mood: "", activities: [], effort: "", notes: "" };
+  }
+  renderCycleLogStep();
+}
+
+function renderCycleLogStepBody(step, draft) {
+  if (step === 0) {
+    return `
+      <div class="field"><label>${t("common_date")}</label><input type="date" id="f-cydate" value="${draft.date}"></div>
+      <div class="field"><label>${t("cy_q1")}</label>
+        <select id="f-cyflow">
+          ${["none", "light", "medium", "heavy"].map(f => `<option value="${f}" ${draft.flow === f ? "selected" : ""}>${t("cy_flow_" + f)}</option>`).join("")}
+        </select>
+      </div>`;
+  }
+  if (step === 1) {
+    return `<div class="field"><label>${t("cy_q2")}</label>
       <div class="chip-group">
-        ${["cramps", "fatigue", "headache", "bloating", "backpain"].map(s => `<span class="chip" data-toggle-symptom="${s}">${t("cy_symptom_" + s)}</span>`).join("")}
+        ${SYMPTOM_KEYS.map(s => `<span class="chip ${draft.symptoms.includes(s) ? "selected" : ""}" data-toggle-symptom="${s}">${t("cy_symptom_" + s)}</span>`).join("")}
+      </div>
+    </div>`;
+  }
+  if (step === 2) {
+    return `<div class="field"><label>${t("cy_q3")}</label></div>
+      ${Object.keys(MOOD_GROUPS).map(group => `
+        <p class="muted" style="margin:10px 0 4px;font-size:12px;font-weight:600">${t("cy_mood_group_" + group)}</p>
+        <div class="chip-group">
+          ${MOOD_GROUPS[group].map(m => `<span class="chip ${draft.mood === m ? "selected" : ""}" data-mood="${m}">${t("cy_mood_" + m)}</span>`).join("")}
+        </div>
+      `).join("")}`;
+  }
+  if (step === 3) {
+    return `<div class="field"><label>${t("cy_q4")}</label>
+      <div class="chip-group">
+        ${CYCLE_ACTIVITIES.map(a => `<span class="chip ${draft.activities.includes(a) ? "selected" : ""}" data-toggle-activity="${a}">${t("cy_activity_" + a)}</span>`).join("")}
+      </div>
+    </div>`;
+  }
+  return `<div class="field"><label>${t("cy_q5")}</label>
+      <div class="chip-group" id="cy-effort-row">
+        ${CYCLE_EFFORTS.map(e => `<span class="chip ${draft.effort === e ? "selected" : ""}" data-effort="${e}">${t("cy_effort_" + e)}</span>`).join("")}
       </div>
     </div>
-    <div class="field"><label>${t("common_mood")}</label>
-      <div class="mood-row" id="cy-mood-row">
-        ${["😀", "🙂", "😐", "😔", "😣"].map(m => `<button data-mood="${m}">${m}</button>`).join("")}
-      </div>
+    <div class="field"><label>${t("cy_q_notes")}</label><textarea id="f-cynotes">${escapeHtml(draft.notes)}</textarea></div>`;
+}
+
+function renderCycleLogStep() {
+  const step = state.cyLogStep;
+  const draft = window.__cyDraft;
+  const isLast = step === CYCLE_LOG_STEPS.length - 1;
+  openModal(`
+    <div class="modal-header"><h2>${t("cy_log_day")} (${step + 1}/${CYCLE_LOG_STEPS.length})</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
+    ${renderCycleLogStepBody(step, draft)}
+    <div class="grid-2" style="margin-top:14px">
+      ${step > 0 ? `<button class="btn secondary" data-action="cy-log-prev">${t("common_back")}</button>` : "<span></span>"}
+      <button class="btn" data-action="${isLast ? "cy-save-day" : "cy-log-next"}">${isLast ? t("common_save") : t("common_next")}</button>
     </div>
-    <button class="btn block" data-action="cy-save-day">${t("common_save")}</button>
   `);
-  const selectedSymptoms = new Set();
-  let selectedMood = "";
-  document.querySelectorAll("[data-toggle-symptom]").forEach(chip => {
-    chip.addEventListener("click", () => {
-      const s = chip.getAttribute("data-toggle-symptom");
-      chip.classList.toggle("selected");
-      if (selectedSymptoms.has(s)) selectedSymptoms.delete(s); else selectedSymptoms.add(s);
+  attachCycleLogStepListeners(step, draft);
+}
+
+function attachCycleLogStepListeners(step, draft) {
+  if (step === 1) {
+    document.querySelectorAll("[data-toggle-symptom]").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const s = chip.getAttribute("data-toggle-symptom");
+        chip.classList.toggle("selected");
+        const idx = draft.symptoms.indexOf(s);
+        if (idx >= 0) draft.symptoms.splice(idx, 1); else draft.symptoms.push(s);
+      });
     });
-  });
-  document.querySelectorAll("#cy-mood-row button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#cy-mood-row button").forEach(b => b.classList.remove("selected"));
-      btn.classList.add("selected");
-      selectedMood = btn.getAttribute("data-mood");
+  } else if (step === 2) {
+    document.querySelectorAll("[data-mood]").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        document.querySelectorAll("[data-mood]").forEach((c) => c.classList.remove("selected"));
+        chip.classList.add("selected");
+        draft.mood = chip.getAttribute("data-mood");
+      });
     });
-  });
-  window.__cyGetSymptoms = () => Array.from(selectedSymptoms);
-  window.__cyGetMood = () => selectedMood;
+  } else if (step === 3) {
+    document.querySelectorAll("[data-toggle-activity]").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const a = chip.getAttribute("data-toggle-activity");
+        chip.classList.toggle("selected");
+        const idx = draft.activities.indexOf(a);
+        if (idx >= 0) draft.activities.splice(idx, 1); else draft.activities.push(a);
+      });
+    });
+  } else if (step === 4) {
+    document.querySelectorAll("#cy-effort-row .chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        document.querySelectorAll("#cy-effort-row .chip").forEach((c) => c.classList.remove("selected"));
+        chip.classList.add("selected");
+        draft.effort = chip.getAttribute("data-effort");
+      });
+    });
+  }
+}
+
+function captureCycleLogStepInputs() {
+  const draft = window.__cyDraft;
+  if (state.cyLogStep === 0) {
+    draft.date = document.getElementById("f-cydate").value || todayISO();
+    draft.flow = document.getElementById("f-cyflow").value;
+  } else if (state.cyLogStep === 4) {
+    draft.notes = document.getElementById("f-cynotes").value;
+  }
+}
+
+function cyLogNext() {
+  captureCycleLogStepInputs();
+  state.cyLogStep++;
+  openCycleLogModal(false);
+}
+function cyLogPrev() {
+  captureCycleLogStepInputs();
+  state.cyLogStep--;
+  openCycleLogModal(false);
 }
 
 function saveCycleDay() {
+  captureCycleLogStepInputs();
+  const draft = window.__cyDraft;
   const entry = {
     id: uid(),
-    date: document.getElementById("f-cydate").value || todayISO(),
-    flow: document.getElementById("f-cyflow").value,
-    symptoms: window.__cyGetSymptoms ? window.__cyGetSymptoms() : [],
-    mood: window.__cyGetMood ? window.__cyGetMood() : ""
+    date: draft.date,
+    flow: draft.flow,
+    symptoms: draft.symptoms,
+    mood: draft.mood,
+    activities: draft.activities,
+    effort: draft.effort,
+    notes: draft.notes
   };
   Store.data.cycleEntries = Store.data.cycleEntries.filter(e => e.date !== entry.date);
   Store.data.cycleEntries.push(entry);
@@ -703,6 +1164,52 @@ function saveCycleDay() {
 function deleteCycleEntry(id) {
   Store.data.cycleEntries = Store.data.cycleEntries.filter(e => e.id !== id);
   Store.save();
+  render();
+}
+
+function cyToggleHistory() {
+  state.cyHistoryOpen = !state.cyHistoryOpen;
+  render();
+}
+
+function openCycleProfileModal() {
+  const p = Store.data.cycleProfile || {};
+  openModal(`
+    <div class="modal-header"><h2>${t("cy_profile_title")}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
+    <div class="field"><label>${t("cy_profile_q1")}</label><input type="number" id="f-cpcycle" value="${p.avgCycleLength || 28}" min="15" max="60">
+      <p class="muted" style="font-size:11px;margin-top:4px">${t("cy_profile_q1_hint")}</p>
+    </div>
+    <div class="field"><label>${t("cy_profile_q2")}</label><input type="number" id="f-cpperiod" value="${p.avgPeriodLength || 5}" min="1" max="14">
+      <p class="muted" style="font-size:11px;margin-top:4px">${t("cy_profile_q2_hint")}</p>
+    </div>
+    <div class="field"><label>${t("cy_profile_q3")}</label><input type="date" id="f-cplast" value="${p.lastPeriodStart || ""}"></div>
+    <div class="field"><label>${t("cy_profile_q4")}</label>
+      <div class="chip-group" id="cp-symptom-row">
+        ${SYMPTOM_KEYS.map(s => `<span class="chip ${p.commonSymptoms && p.commonSymptoms.includes(s) ? "selected" : ""}" data-toggle-symptom="${s}">${t("cy_symptom_" + s)}</span>`).join("")}
+      </div>
+    </div>
+    <button class="btn block" data-action="cy-save-profile">${t("common_save")}</button>
+  `);
+  const selected = new Set(p.commonSymptoms || []);
+  document.querySelectorAll("#cp-symptom-row .chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const s = chip.getAttribute("data-toggle-symptom");
+      chip.classList.toggle("selected");
+      if (selected.has(s)) selected.delete(s); else selected.add(s);
+    });
+  });
+  window.__cpGetSymptoms = () => Array.from(selected);
+}
+
+function saveCycleProfile() {
+  Store.data.cycleProfile = {
+    avgCycleLength: parseInt(document.getElementById("f-cpcycle").value, 10) || 28,
+    avgPeriodLength: parseInt(document.getElementById("f-cpperiod").value, 10) || 5,
+    lastPeriodStart: document.getElementById("f-cplast").value || null,
+    commonSymptoms: window.__cpGetSymptoms ? window.__cpGetSymptoms() : []
+  };
+  Store.save();
+  closeModal();
   render();
 }
 
@@ -731,7 +1238,7 @@ function renderCalendar() {
     const hasEvent = events.some(e => e.date === dateISO);
     const phase = state.calOverlayCycle ? computeCyclePhase(dateISO) : null;
     const phaseColor = phase && phase !== "unknown" ? `var(--cycle-${phase})` : "";
-    cells += `<div class="calendar-day ${dateISO === today ? "today" : ""}" data-action="cal-day-click" data-date="${dateISO}" style="${phaseColor ? `background:${phaseColor}22;border:1px solid ${phaseColor}` : ""}">
+    cells += `<div class="calendar-day ${dateISO === today ? "today" : ""}" data-action="cal-day-click" data-date="${dateISO}" style="${phaseColor ? `background:${phaseColor}3d;border:1px solid ${phaseColor}` : ""}">
       ${day}${hasEvent ? '<span class="evt-dot"></span>' : ""}
     </div>`;
   }
@@ -751,9 +1258,17 @@ function renderCalendar() {
   <div class="field" style="margin-top:14px">
     <label><input type="checkbox" data-action="toggle-cal-overlay" ${state.calOverlayCycle ? "checked" : ""}> ${t("cal_overlay_cycle")}</label>
   </div>
+  ${state.calOverlayCycle ? renderCyclePhaseLegend() : ""}
   <div class="card">
     <h3>${t("cal_upcoming")}</h3>
     ${upcoming.length ? upcoming.map(e => `<div class="list-row"><span>${fmtDate(e.date)} — ${escapeHtml(e.title)}</span></div>`).join("") : `<p class="muted">${t("cal_empty")}</p>`}
+  </div>`;
+}
+
+function renderCyclePhaseLegend() {
+  const phases = ["menstrual", "follicular", "ovulation", "luteal"];
+  return `<div class="chip-group" style="margin-bottom:14px">
+    ${phases.map(p => `<span class="chip" style="background:var(--cycle-${p})3d;border-color:var(--cycle-${p})">${t("cy_phase_" + p)}</span>`).join("")}
   </div>`;
 }
 
@@ -826,9 +1341,37 @@ function deleteEvent(id) {
   render();
 }
 
-// ================= JOURNAL =================
+// ================= JOURNAL / STRUCTURED =================
+const TASK_ICONS = ["📌", "💼", "🏃", "📚", "🛒", "🧹", "💡", "🎯", "❤️", "🎨"];
+const TASK_PRIORITIES = ["low", "medium", "high"];
+
 function renderJournal() {
   if (isLocked("journal")) return renderLockScreen("jr_locked_msg");
+  const views = ["diary", "tasks", "habits"];
+  return `
+  <div class="chip-group" style="margin-bottom:12px">
+    ${views.map(v => `<span class="chip ${state.jrView === v ? "selected" : ""}" data-action="jr-set-view" data-view="${v}">${t("jr_tab_" + v)}</span>`).join("")}
+  </div>
+  ${renderUpcomingAgenda()}
+  ${state.jrView === "tasks" ? renderTasksView() : state.jrView === "habits" ? renderHabitsView() : renderDiaryView()}
+  `;
+}
+
+function jrSetView(view) {
+  state.jrView = view;
+  render();
+}
+
+function renderUpcomingAgenda() {
+  const upcoming = Store.data.events.filter(e => e.date >= todayISO()).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);
+  if (!upcoming.length) return "";
+  return `<div class="card">
+    <h3>${t("cal_upcoming")}</h3>
+    ${upcoming.map(e => `<div class="list-row"><span>${fmtDate(e.date)} — ${escapeHtml(e.title)}</span></div>`).join("")}
+  </div>`;
+}
+
+function renderDiaryView() {
   const d = Store.data.journalEntries.slice().sort((a, b) => b.date.localeCompare(a.date));
   let filtered = d;
   if (state.jrQuery) {
@@ -840,6 +1383,202 @@ function renderJournal() {
   <p class="muted">${t("jr_entries_count", { n: d.length })}</p>
   <div id="jr-list">${renderJournalList_(filtered, !!state.jrQuery)}</div>`;
 }
+
+function renderTasksView() {
+  const order = { high: 0, medium: 1, low: 2 };
+  const tasks = Store.data.tasks.slice().sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    return (order[a.priority] || 1) - (order[b.priority] || 1);
+  });
+  return tasks.length ? tasks.map(tk => renderTaskCard(tk)).join("") : `<div class="empty-state"><span class="ico">✅</span>${t("task_empty")}</div>`;
+}
+
+function renderTaskCard(tk) {
+  const color = tk.color || "var(--accent)";
+  return `<div class="card" style="border-left:4px solid ${color}; opacity:${tk.done ? 0.6 : 1}">
+    <div class="row-between">
+      <h3>${tk.icon || "📌"} ${escapeHtml(tk.title)}${tk.done ? " ✓" : ""}</h3>
+      <span class="badge">${t("task_priority_" + (tk.priority || "medium"))}</span>
+    </div>
+    ${tk.dueDate ? `<p class="muted">${t("task_due_date")}: ${fmtDate(tk.dueDate)}</p>` : ""}
+    ${tk.durationMinutes ? `<p class="muted">${tk.durationMinutes} min</p>` : ""}
+    <div style="background:var(--surface-alt);border-radius:8px;height:8px;overflow:hidden;margin:8px 0">
+      <div style="background:${color};height:100%;width:${tk.progress || 0}%"></div>
+    </div>
+    <div class="grid-2">
+      <button class="btn secondary sm" data-action="task-bump-progress" data-id="${tk.id}">+25%</button>
+      <button class="btn secondary sm" data-action="task-toggle-done" data-id="${tk.id}">${tk.done ? t("task_mark_undone") : t("task_mark_done")}</button>
+    </div>
+    <button class="icon-btn" style="margin-top:8px" data-action="delete-task" data-id="${tk.id}">✕</button>
+  </div>`;
+}
+
+function openTaskModal() {
+  openModal(`
+    <div class="modal-header"><h2>${t("task_add")}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
+    <div class="field"><label>${t("task_title")}</label><input id="f-tktitle"></div>
+    <div class="grid-2">
+      <div class="field"><label>${t("task_priority")}</label>
+        <select id="f-tkpriority">${TASK_PRIORITIES.map(p => `<option value="${p}">${t("task_priority_" + p)}</option>`).join("")}</select>
+      </div>
+      <div class="field"><label>${t("task_due_date")}</label><input type="date" id="f-tkdue"></div>
+    </div>
+    <div class="field"><label>${t("task_duration")}</label><input type="number" id="f-tkduration" min="0"></div>
+    <div class="field"><label>${t("task_icon")}</label>
+      <div class="chip-group" id="tk-icon-row">${TASK_ICONS.map(ic => `<span class="chip" data-icon="${ic}">${ic}</span>`).join("")}</div>
+    </div>
+    <div class="field"><label>${t("task_color")}</label>
+      <div class="chip-group" id="tk-color-row">${COLORS.map(([c, hex]) => `<span class="swatch-chip" data-color-hex="${hex}" style="background:${hex}" title="${t("wr_color_" + c)}"></span>`).join("")}</div>
+    </div>
+    <button class="btn block" data-action="save-task">${t("common_save")}</button>
+  `);
+  let selIcon = TASK_ICONS[0];
+  let selColorHex = "";
+  document.querySelectorAll("#tk-icon-row .chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      document.querySelectorAll("#tk-icon-row .chip").forEach((c) => c.classList.remove("selected"));
+      chip.classList.add("selected");
+      selIcon = chip.getAttribute("data-icon");
+    });
+  });
+  document.querySelectorAll("#tk-color-row .swatch-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      document.querySelectorAll("#tk-color-row .swatch-chip").forEach((c) => c.classList.remove("selected"));
+      chip.classList.add("selected");
+      selColorHex = chip.getAttribute("data-color-hex");
+    });
+  });
+  window.__tkGetIcon = () => selIcon;
+  window.__tkGetColor = () => selColorHex;
+}
+
+function saveTask() {
+  const task = {
+    id: uid(),
+    title: document.getElementById("f-tktitle").value || "Task",
+    priority: document.getElementById("f-tkpriority").value,
+    dueDate: document.getElementById("f-tkdue").value || null,
+    durationMinutes: parseInt(document.getElementById("f-tkduration").value, 10) || 0,
+    icon: window.__tkGetIcon ? window.__tkGetIcon() : "📌",
+    color: window.__tkGetColor ? window.__tkGetColor() : "",
+    progress: 0, done: false, createdAt: todayISO()
+  };
+  Store.data.tasks.push(task);
+  Store.save();
+  closeModal();
+  render();
+}
+function taskBumpProgress(id) {
+  const tk = Store.data.tasks.find(x => x.id === id);
+  tk.progress = Math.min(100, (tk.progress || 0) + 25);
+  if (tk.progress >= 100) tk.done = true;
+  Store.save();
+  render();
+}
+function taskToggleDone(id) {
+  const tk = Store.data.tasks.find(x => x.id === id);
+  tk.done = !tk.done;
+  if (tk.done) tk.progress = 100;
+  Store.save();
+  render();
+}
+function deleteTask(id) {
+  if (!confirm(t("common_confirm_delete"))) return;
+  Store.data.tasks = Store.data.tasks.filter(x => x.id !== id);
+  Store.save();
+  render();
+}
+
+function renderHabitsView() {
+  const habits = Store.data.habits;
+  return habits.length ? habits.map(h => renderHabitCard(h)).join("") : `<div class="empty-state"><span class="ico">🔁</span>${t("habit_empty")}</div>`;
+}
+
+function renderHabitCard(h) {
+  const today = todayISO();
+  const last7 = [];
+  for (let i = 6; i >= 0; i--) last7.push(addDays(today, -i));
+  const streak = computeHabitStreak(h);
+  const done = h.completedDates || [];
+  return `<div class="card">
+    <div class="row-between">
+      <h3>${h.icon || "🔁"} ${escapeHtml(h.name)}</h3>
+      <button class="icon-btn" data-action="delete-habit" data-id="${h.id}">✕</button>
+    </div>
+    <p class="muted">${t("habit_streak", { n: streak })}</p>
+    <div class="chip-group">
+      ${last7.map(d => `<span class="chip ${done.includes(d) ? "selected" : ""}" style="${done.includes(d) ? `background:${h.color || "var(--accent)"};border-color:${h.color || "var(--accent)"}` : ""}" data-action="habit-toggle-day" data-id="${h.id}" data-date="${d}">${d.slice(8, 10)}</span>`).join("")}
+    </div>
+  </div>`;
+}
+
+function computeHabitStreak(h) {
+  let streak = 0;
+  let d = todayISO();
+  const set = new Set(h.completedDates || []);
+  while (set.has(d)) { streak++; d = addDays(d, -1); }
+  return streak;
+}
+
+function openHabitModal() {
+  openModal(`
+    <div class="modal-header"><h2>${t("habit_add")}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
+    <div class="field"><label>${t("habit_name")}</label><input id="f-hbname"></div>
+    <div class="field"><label>${t("task_icon")}</label>
+      <div class="chip-group" id="hb-icon-row">${TASK_ICONS.map(ic => `<span class="chip" data-icon="${ic}">${ic}</span>`).join("")}</div>
+    </div>
+    <div class="field"><label>${t("task_color")}</label>
+      <div class="chip-group" id="hb-color-row">${COLORS.map(([c, hex]) => `<span class="swatch-chip" data-color-hex="${hex}" style="background:${hex}" title="${t("wr_color_" + c)}"></span>`).join("")}</div>
+    </div>
+    <button class="btn block" data-action="save-habit">${t("common_save")}</button>
+  `);
+  let selIcon = TASK_ICONS[0];
+  let selColorHex = "";
+  document.querySelectorAll("#hb-icon-row .chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      document.querySelectorAll("#hb-icon-row .chip").forEach((c) => c.classList.remove("selected"));
+      chip.classList.add("selected");
+      selIcon = chip.getAttribute("data-icon");
+    });
+  });
+  document.querySelectorAll("#hb-color-row .swatch-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      document.querySelectorAll("#hb-color-row .swatch-chip").forEach((c) => c.classList.remove("selected"));
+      chip.classList.add("selected");
+      selColorHex = chip.getAttribute("data-color-hex");
+    });
+  });
+  window.__hbGetIcon = () => selIcon;
+  window.__hbGetColor = () => selColorHex;
+}
+
+function saveHabit() {
+  const habit = {
+    id: uid(),
+    name: document.getElementById("f-hbname").value || "Habit",
+    icon: window.__hbGetIcon ? window.__hbGetIcon() : "🔁",
+    color: window.__hbGetColor ? window.__hbGetColor() : "",
+    completedDates: []
+  };
+  Store.data.habits.push(habit);
+  Store.save();
+  closeModal();
+  render();
+}
+function toggleHabitDay(id, date) {
+  const h = Store.data.habits.find(x => x.id === id);
+  h.completedDates = h.completedDates || [];
+  const idx = h.completedDates.indexOf(date);
+  if (idx >= 0) h.completedDates.splice(idx, 1); else h.completedDates.push(date);
+  Store.save();
+  render();
+}
+function deleteHabit(id) {
+  if (!confirm(t("common_confirm_delete"))) return;
+  Store.data.habits = Store.data.habits.filter(x => x.id !== id);
+  Store.save();
+  render();
+}
 function renderJournalList_(entries, isFiltered) {
   if (!entries.length) return `<div class="empty-state"><span class="ico">📓</span>${isFiltered ? t("jr_no_results") : t("jr_empty")}</div>`;
   return entries.map(e => `
@@ -850,7 +1589,7 @@ function renderJournalList_(entries, isFiltered) {
       </div>
       ${(e.photos || []).map(p => `<img src="${p}">`).join("")}
       <p>${escapeHtml(e.text)}</p>
-      ${e.cyclePhase && e.cyclePhase !== "unknown" ? `<span class="badge">${t("cy_phase_" + e.cyclePhase)}</span>` : ""}
+      ${e.cyclePhase && e.cyclePhase !== "unknown" ? `<span class="badge" style="background:var(--cycle-${e.cyclePhase})3d;color:var(--text)">${t("cy_phase_" + e.cyclePhase)}</span>` : ""}
       <div class="tags">${(e.tags || []).map(tag => `<span class="chip">${escapeHtml(tag)}</span>`).join("")}</div>
     </div>`).join("");
 }
@@ -869,7 +1608,7 @@ function selectJournalMood(mood) {
 function openJournalModal() {
   const outfits = Store.data.outfits;
   const today = todayISO();
-  const phase = Store.data.cycleEntries.length ? computeCyclePhase(today) : "unknown";
+  const phase = (Store.data.cycleEntries.length || Store.data.cycleProfile) ? computeCyclePhase(today) : "unknown";
   openModal(`
     <div class="modal-header"><h2>${t("jr_new_entry")}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
     <div class="photo-upload" id="jr-photo-box">
@@ -918,7 +1657,7 @@ function saveJournal() {
     mood: window.__jrMood || "",
     tags: document.getElementById("f-jtags").value.split(",").map(s => s.trim()).filter(Boolean),
     outfitId: document.getElementById("f-joutfit").value || null,
-    cyclePhase: Store.data.cycleEntries.length ? computeCyclePhase(today) : "unknown"
+    cyclePhase: (Store.data.cycleEntries.length || Store.data.cycleProfile) ? computeCyclePhase(today) : "unknown"
   };
   Store.data.journalEntries.push(entry);
   Store.save();
@@ -971,6 +1710,11 @@ function renderSettings() {
     ` : ""}
   </div>
   <div class="card">
+    <h3>${t("set_notifications")}</h3>
+    <label><input type="checkbox" data-action="toggle-notifications" ${s.notificationsEnabled ? "checked" : ""}> ${t("set_notifications_enable")}</label>
+    ${s.notificationsEnabled && window.Notification && Notification.permission === "denied" ? `<p class="muted" style="margin-top:8px">${t("set_notifications_denied")}</p>` : ""}
+  </div>
+  <div class="card">
     <h3>${t("set_data")}</h3>
     <button class="btn secondary block" data-action="export-data">${t("set_export")}</button>
     <p class="muted">${t("set_export_hint")}</p>
@@ -986,6 +1730,15 @@ function setLanguage(lang) {
   I18N.setLang(lang);
   Store.data.settings.lang = lang;
   Store.save();
+  render();
+}
+function toggleThemeQuick() {
+  const order = ["light", "dark", "system"];
+  const s = Store.data.settings;
+  const idx = order.indexOf(s.theme);
+  s.theme = order[(idx + 1) % order.length];
+  Store.save();
+  applyTheme();
   render();
 }
 function setThemeChoice(theme) {
@@ -1004,6 +1757,16 @@ function togglePinEnable() {
   if (!s.pinEnabled) { s.pin = null; Store.data.unlocked = true; }
   Store.save();
   render();
+}
+function toggleNotifications() {
+  const s = Store.data.settings;
+  s.notificationsEnabled = !s.notificationsEnabled;
+  if (s.notificationsEnabled && window.Notification && Notification.permission !== "granted" && Notification.permission !== "denied") {
+    Notification.requestPermission();
+  }
+  Store.save();
+  render();
+  if (s.notificationsEnabled) checkReminders();
 }
 function savePin() {
   const p1 = document.getElementById("f-pin-new").value;
