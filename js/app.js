@@ -39,7 +39,9 @@ const REMINDER_OFFSETS = [
 function checkReminders() {
   if (!Store.data.settings.notificationsEnabled) return;
   const now = Date.now();
+  const today = todayISO();
   let changed = false;
+
   Store.data.events.forEach((e) => {
     const eventTime = e.time || "09:00";
     const eventMs = new Date(`${e.date}T${eventTime}:00`).getTime();
@@ -49,17 +51,37 @@ function checkReminders() {
       if (Store.data.firedReminders.includes(key)) return;
       const triggerMs = eventMs - off.ms;
       if (now >= triggerMs && now < eventMs) {
-        fireReminder(e, off.key);
+        fireReminder(t("cal_reminder_" + off.key, { title: e.title }));
         Store.data.firedReminders.push(key);
         changed = true;
       }
     });
   });
+
+  Store.data.habits.forEach((h) => {
+    const done = (h.completedDates || []).includes(today);
+    const key = `habit_${h.id}_${today}`;
+    if (!done && !Store.data.firedReminders.includes(key)) {
+      fireReminder(t("habit_reminder", { name: h.name }));
+      Store.data.firedReminders.push(key);
+      changed = true;
+    }
+  });
+
+  Store.data.tasks.forEach((tk) => {
+    if (tk.done) return;
+    const key = `task_${tk.id}_${today}`;
+    if (!Store.data.firedReminders.includes(key)) {
+      fireReminder(t("task_reminder", { title: tk.title }));
+      Store.data.firedReminders.push(key);
+      changed = true;
+    }
+  });
+
   if (changed) Store.save();
 }
 
-function fireReminder(event, offsetKey) {
-  const msg = t("cal_reminder_" + offsetKey, { title: event.title });
+function fireReminder(msg) {
   showToast(msg);
   if (window.Notification && Notification.permission === "granted") {
     try { new Notification(t("app_name"), { body: msg }); } catch (e) { /* ignore */ }
@@ -70,6 +92,8 @@ function showToast(msg) {
   const el = document.createElement("div");
   el.className = "toast";
   el.textContent = msg;
+  const stackOffset = document.querySelectorAll(".toast").length * 54;
+  el.style.bottom = (90 + stackOffset) + "px";
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 6000);
 }
@@ -1500,14 +1524,21 @@ function renderHabitCard(h) {
   for (let i = 6; i >= 0; i--) last7.push(addDays(today, -i));
   const streak = computeHabitStreak(h);
   const done = h.completedDates || [];
+  const doneThisWeek = last7.filter(d => done.includes(d)).length;
+  const weekPct = Math.round((doneThisWeek / 7) * 100);
+  const color = h.color || "var(--accent)";
   return `<div class="card">
     <div class="row-between">
       <h3>${h.icon || "🔁"} ${escapeHtml(h.name)}</h3>
       <button class="icon-btn" data-action="delete-habit" data-id="${h.id}">✕</button>
     </div>
     <p class="muted">${t("habit_streak", { n: streak })}</p>
+    <div style="background:var(--surface-alt);border-radius:8px;height:8px;overflow:hidden;margin:8px 0">
+      <div style="background:${color};height:100%;width:${weekPct}%"></div>
+    </div>
+    <p class="muted" style="font-size:11px">${t("habit_week_progress", { n: doneThisWeek })}</p>
     <div class="chip-group">
-      ${last7.map(d => `<span class="chip ${done.includes(d) ? "selected" : ""}" style="${done.includes(d) ? `background:${h.color || "var(--accent)"};border-color:${h.color || "var(--accent)"}` : ""}" data-action="habit-toggle-day" data-id="${h.id}" data-date="${d}">${d.slice(8, 10)}</span>`).join("")}
+      ${last7.map(d => `<span class="chip ${done.includes(d) ? "selected" : ""}" style="${done.includes(d) ? `background:${color};border-color:${color}` : ""}" data-action="habit-toggle-day" data-id="${h.id}" data-date="${d}">${d.slice(8, 10)}</span>`).join("")}
     </div>
   </div>`;
 }
