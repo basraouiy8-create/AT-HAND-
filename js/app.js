@@ -12,9 +12,13 @@ let state = {
   cyLogStep: 0,
   calMonth: new Date().getMonth(),
   calYear: new Date().getFullYear(),
-  calOverlayCycle: false,
+  calView: "events",
   jrQuery: "",
   jrView: "diary",
+  stFiltersOpen: false,
+  stFilter: { q: "", when: "", project: "" },
+  tkVarietyOpen: false,
+  hbVarietyOpen: false,
   pinBuffer: "",
   pinMode: null // 'unlock' | 'setup'
 };
@@ -149,6 +153,10 @@ function handleAction(action, id, el, e) {
     case "open-edit-item": openItemModal(id); break;
     case "save-item": saveItem(id); break;
     case "delete-item": deleteItem(id); break;
+    case "open-shopping-list": openShoppingListModal(); break;
+    case "add-shopping-item": addShoppingItem(); break;
+    case "toggle-shopping-item": toggleShoppingItem(id); break;
+    case "delete-shopping-item": deleteShoppingItem(id); break;
     case "toggle-item-favorite": toggleItemFavorite(id); break;
     case "mark-item-worn": markItemWorn(id); break;
     case "set-item-status": setItemStatus(id, el.value !== undefined ? el.value : el.getAttribute("data-status")); break;
@@ -187,13 +195,18 @@ function handleAction(action, id, el, e) {
     case "open-add-event": openEventModal(el.getAttribute("data-date")); break;
     case "save-event": saveEvent(); break;
     case "delete-event": deleteEvent(id); break;
-    case "toggle-cal-overlay": state.calOverlayCycle = !state.calOverlayCycle; render(); break;
+    case "cal-set-view": state.calView = el.getAttribute("data-view"); render(); break;
 
     case "open-add-journal": openJournalModal(); break;
     case "save-journal": saveJournal(); break;
     case "delete-journal": deleteJournal(id); break;
     case "jr-mood": selectJournalMood(el.getAttribute("data-mood")); break;
     case "jr-set-view": jrSetView(el.getAttribute("data-view")); break;
+    case "st-toggle-filters": stToggleFilters(); break;
+    case "st-filter-when": stFilterWhen(el.getAttribute("data-when")); break;
+    case "st-filter-project": stFilterProject(el.getAttribute("data-project")); break;
+    case "tk-toggle-variety": state.tkVarietyOpen = !state.tkVarietyOpen; render(); break;
+    case "hb-toggle-variety": state.hbVarietyOpen = !state.hbVarietyOpen; render(); break;
     case "open-add-task": openTaskModal(); break;
     case "save-task": saveTask(); break;
     case "task-bump-progress": taskBumpProgress(id); break;
@@ -374,9 +387,16 @@ function subTypeLabel(group, sub) {
   if (group === "accessories") return t("wr_acc_" + sub);
   return t("wr_cat_" + sub);
 }
+const STYLES_BY_PART = {
+  top: ["tshirt", "blouse", "tanktop", "croptop", "sweater", "hoodie", "cardigan", "blazer", "vest", "turtleneck", "polo", "camisole", "tunic", "sweatshirt", "henley", "bodysuit", "haltertop", "peplumtop", "wraptop", "kimonotop", "flannelshirt", "buttondownshirt", "offshouldertop", "coldshouldertop", "bellsleevetop", "graphictee", "longsleevetee", "tubetop", "corsettop", "babydolltop"],
+  bottom: ["jeans", "trousers", "shorts", "miniskirt", "midiskirt", "maxiskirt", "leggings", "culottes", "palazzopants", "cargopants", "joggers", "capripants", "chinos", "widelegpants", "skinnypants", "bootcutpants", "flarepants", "highwaistpants", "bermudashorts", "denimshorts", "pencilskirt", "alineskirt", "pleatedskirt", "wrapskirt", "overalls", "bikeshorts", "sweatpants", "cargoshorts", "paperbagpants", "harempants"],
+  dress: ["maxidress", "mididress", "minidress", "shiftdress", "wrapdress", "sheathdress", "alinedress", "bodycondress", "shirtdress", "sundress", "slipdress", "cocktaildress", "eveninggown", "sweaterdress", "tunicdress", "peplumdress", "offshoulderdress", "halterdress", "tiereddress", "ruffledress", "smockdress", "babydolldress", "pinaforedress", "denimdress", "tshirtdress", "asymmetricdress", "floraldress", "littleblackdress", "capedress", "columndress"],
+  outerwear: ["jacket", "coat", "trenchcoat", "peacoat", "parka", "bomberjacket", "denimjacket", "leatherjacket", "pufferjacket", "windbreaker", "raincoat", "cape", "poncho", "shrug", "dustercoat", "overcoat", "wrapcoat", "varsityjacket", "motojacket", "quiltedjacket", "fleecejacket", "shearlingjacket", "anorak", "carcoat", "croppedjacket", "utilityjacket", "teddycoat", "wintercoat", "fauxfurcoat", "kimonojacket"]
+};
 function itemCategoryLabel(item) {
   const group = item.categoryGroup || "parts";
   const sub = item.subCategory || "top";
+  if (group === "parts" && item.style) return t("style_" + item.style);
   return subTypeLabel(group, sub);
 }
 function wrFilteredItems() {
@@ -405,6 +425,7 @@ function renderWardrobe() {
     <button class="icon-btn" data-action="wr-toggle-view" title="${state.wrView === "gallery" ? t("wr_view_list") : t("wr_view_gallery")}">${state.wrView === "gallery" ? "▦" : "🖼️"}</button>
   </div>
   ${state.wrFiltersOpen ? renderWrFilterPanel() : ""}
+  <button class="btn secondary block" style="margin-bottom:10px" data-action="open-shopping-list">🛍️ ${t("wr_shopping_list")}</button>
   <div class="card" data-action="wr-toggle-stats" style="cursor:pointer">
     <div class="row-between mb-0"><h3 class="mb-0">${t("wr_stats_title")}</h3><span>${state.wrStatsOpen ? "▾" : "▸"}</span></div>
     ${state.wrStatsOpen ? `
@@ -478,6 +499,17 @@ function renderWardrobeList() {
   document.getElementById("wr-list").innerHTML = state.wrView === "gallery" ? renderWardrobeGallery(items) : renderWardrobeGrid(items);
 }
 
+function renderStylePickerHTML(group, sub, selectedStyle) {
+  if (group !== "parts") return "";
+  const styles = STYLES_BY_PART[sub] || [];
+  if (!styles.length) return "";
+  return `<div class="field"><label>${t("wr_style")}</label>
+    <div class="chip-row-scroll" id="f-style-row">
+      ${styles.map(s => `<span class="chip ${selectedStyle === s ? "selected" : ""}" data-style="${s}">${t("style_" + s)}</span>`).join("")}
+    </div>
+  </div>`;
+}
+
 function openItemModal(id) {
   const item = id ? Store.data.items.find(i => i.id === id) : null;
   const initGroup = item ? (item.categoryGroup || "parts") : "parts";
@@ -496,6 +528,7 @@ function openItemModal(id) {
         <select id="f-sub">${subTypesForGroup(initGroup).map(s => `<option value="${s}" ${initSub === s ? "selected" : ""}>${subTypeLabel(initGroup, s)}</option>`).join("")}</select>
       </div>
     </div>
+    <div id="f-style-wrap">${renderStylePickerHTML(initGroup, initSub, item ? item.style : "")}</div>
     <div class="field"><label>${t("wr_color")}</label>
       <div class="chip-group" id="f-color-picker">${COLORS.map(([c, hex]) => `<span class="swatch-chip ${item && item.color === c ? "selected" : ""}" data-color="${c}" style="background:${hex}" title="${t("wr_color_" + c)}"></span>`).join("")}</div>
     </div>
@@ -549,9 +582,32 @@ function openItemModal(id) {
   });
   window.__getSelectedColor = () => selectedColor;
 
+  let selectedStyle = item ? item.style || "" : "";
+  function attachStyleListeners() {
+    document.querySelectorAll("#f-style-row .chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        document.querySelectorAll("#f-style-row .chip").forEach((c) => c.classList.remove("selected"));
+        chip.classList.add("selected");
+        selectedStyle = chip.getAttribute("data-style");
+      });
+    });
+  }
+  attachStyleListeners();
+  window.__getSelectedStyle = () => selectedStyle;
+
   document.getElementById("f-group").addEventListener("change", function () {
     const group = this.value;
     document.getElementById("f-sub").innerHTML = subTypesForGroup(group).map((s) => `<option value="${s}">${subTypeLabel(group, s)}</option>`).join("");
+    const newSub = document.getElementById("f-sub").value;
+    selectedStyle = "";
+    document.getElementById("f-style-wrap").innerHTML = renderStylePickerHTML(group, newSub, "");
+    attachStyleListeners();
+  });
+  document.getElementById("f-sub").addEventListener("change", function () {
+    const group = document.getElementById("f-group").value;
+    selectedStyle = "";
+    document.getElementById("f-style-wrap").innerHTML = renderStylePickerHTML(group, this.value, "");
+    attachStyleListeners();
   });
 }
 
@@ -561,6 +617,7 @@ function saveItem(id) {
     photo,
     categoryGroup: document.getElementById("f-group").value,
     subCategory: document.getElementById("f-sub").value,
+    style: window.__getSelectedStyle ? window.__getSelectedStyle() : "",
     color: window.__getSelectedColor ? window.__getSelectedColor() : "",
     material: document.getElementById("f-material").value,
     brand: document.getElementById("f-brand").value,
@@ -588,6 +645,50 @@ function deleteItem(id) {
   Store.save();
   closeModal();
   render();
+}
+
+function openShoppingListModal() {
+  const list = Store.data.shoppingList;
+  openModal(`
+    <div class="modal-header"><h2>${t("wr_shopping_list")}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
+    <div class="grid-2" style="align-items:flex-start">
+      <input id="f-shopping-name" placeholder="${t("wr_shopping_placeholder")}" style="flex:1">
+      <button class="btn sm" data-action="add-shopping-item">${t("wr_shopping_add")}</button>
+    </div>
+    <div id="shopping-list-items" style="margin-top:12px">${renderShoppingListItems(list)}</div>
+  `);
+}
+
+function renderShoppingListItems(list) {
+  if (!list.length) return `<p class="muted">${t("wr_shopping_empty")}</p>`;
+  return list.map(x => `
+    <div class="list-row">
+      <span style="${x.done ? "text-decoration:line-through;opacity:0.5" : ""}" data-action="toggle-shopping-item" data-id="${x.id}">${x.done ? "✅" : "⬜"} ${escapeHtml(x.name)}</span>
+      <button class="icon-btn" data-action="delete-shopping-item" data-id="${x.id}">✕</button>
+    </div>`).join("");
+}
+
+function addShoppingItem() {
+  const input = document.getElementById("f-shopping-name");
+  const name = input.value.trim();
+  if (!name) return;
+  Store.data.shoppingList.push({ id: uid(), name, done: false });
+  Store.save();
+  input.value = "";
+  document.getElementById("shopping-list-items").innerHTML = renderShoppingListItems(Store.data.shoppingList);
+}
+
+function toggleShoppingItem(id) {
+  const x = Store.data.shoppingList.find(s => s.id === id);
+  x.done = !x.done;
+  Store.save();
+  document.getElementById("shopping-list-items").innerHTML = renderShoppingListItems(Store.data.shoppingList);
+}
+
+function deleteShoppingItem(id) {
+  Store.data.shoppingList = Store.data.shoppingList.filter(s => s.id !== id);
+  Store.save();
+  document.getElementById("shopping-list-items").innerHTML = renderShoppingListItems(Store.data.shoppingList);
 }
 function toggleItemFavorite(id) {
   const item = Store.data.items.find(i => i.id === id);
@@ -1246,6 +1347,16 @@ function changeMonth(delta) {
 }
 
 function renderCalendar() {
+  const views = ["events", "period", "journal"];
+  return `
+  <div class="chip-group" style="margin-bottom:12px">
+    ${views.map(v => `<span class="chip ${state.calView === v ? "selected" : ""}" data-action="cal-set-view" data-view="${v}">${t("cal_tab_" + v)}</span>`).join("")}
+  </div>
+  ${renderCalendarGridSection()}
+  `;
+}
+
+function renderCalendarGridSection() {
   const y = state.calYear, m = state.calMonth;
   const first = new Date(y, m, 1);
   const startDow = (first.getDay() + 6) % 7; // Monday-first
@@ -1254,16 +1365,33 @@ function renderCalendar() {
   const dowLabels = I18N.lang === "fr" ? ["L", "M", "M", "J", "V", "S", "D"] : ["M", "T", "W", "T", "F", "S", "S"];
   const events = Store.data.events;
   const today = todayISO();
+  const view = state.calView;
 
   let cells = "";
   for (let i = 0; i < startDow; i++) cells += `<div class="calendar-day muted"></div>`;
   for (let day = 1; day <= daysInMonth; day++) {
     const dateISO = `${y}-${String(m + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    const hasEvent = events.some(e => e.date === dateISO);
-    const phase = state.calOverlayCycle ? computeCyclePhase(dateISO) : null;
-    const phaseColor = phase && phase !== "unknown" ? `var(--cycle-${phase})` : "";
-    cells += `<div class="calendar-day ${dateISO === today ? "today" : ""}" data-action="cal-day-click" data-date="${dateISO}" style="${phaseColor ? `background:${phaseColor}3d;border:1px solid ${phaseColor}` : ""}">
-      ${day}${hasEvent ? '<span class="evt-dot"></span>' : ""}
+    let cellStyle = "";
+    let dots = "";
+    if (view === "period") {
+      const phase = computeCyclePhase(dateISO);
+      const phaseColor = phase !== "unknown" ? `var(--cycle-${phase})` : "";
+      if (phaseColor) cellStyle = `background:${phaseColor}3d;border:1px solid ${phaseColor}`;
+    } else if (view === "journal") {
+      const hasJournal = Store.data.journalEntries.some(j => j.date === dateISO);
+      const hasOutfit = Store.data.outfits.some(o => (o.wornLog || []).some(w => w.date === dateISO));
+      if (hasJournal) dots += `<span style="background:var(--accent)"></span>`;
+      if (hasOutfit) dots += `<span style="background:var(--cycle-follicular)"></span>`;
+    } else {
+      const hasEvent = events.some(e => e.date === dateISO);
+      const hasTask = Store.data.tasks.some(t => t.dueDate === dateISO);
+      const hasHabit = Store.data.habits.some(h => (h.completedDates || []).includes(dateISO));
+      if (hasEvent) dots += `<span style="background:var(--accent)"></span>`;
+      if (hasTask) dots += `<span style="background:var(--cycle-ovulation)"></span>`;
+      if (hasHabit) dots += `<span style="background:var(--cycle-follicular)"></span>`;
+    }
+    cells += `<div class="calendar-day ${dateISO === today ? "today" : ""}" data-action="cal-day-click" data-date="${dateISO}" style="${cellStyle}">
+      ${day}${dots ? `<span class="day-dots">${dots}</span>` : ""}
     </div>`;
   }
 
@@ -1279,13 +1407,19 @@ function renderCalendar() {
     ${dowLabels.map(l => `<div class="dow">${l}</div>`).join("")}
     ${cells}
   </div>
-  <div class="field" style="margin-top:14px">
-    <label><input type="checkbox" data-action="toggle-cal-overlay" ${state.calOverlayCycle ? "checked" : ""}> ${t("cal_overlay_cycle")}</label>
-  </div>
-  ${state.calOverlayCycle ? renderCyclePhaseLegend() : ""}
-  <div class="card">
+  ${view === "period" ? renderCyclePhaseLegend() + renderPeriodProgressCard() : ""}
+  ${view === "events" ? `<div class="card">
     <h3>${t("cal_upcoming")}</h3>
     ${upcoming.length ? upcoming.map(e => `<div class="list-row"><span>${fmtDate(e.date)} — ${escapeHtml(e.title)}</span></div>`).join("") : `<p class="muted">${t("cal_empty")}</p>`}
+  </div>` : ""}`;
+}
+
+function renderPeriodProgressCard() {
+  const stats = computeCycleStats();
+  if (!stats.avgCycle) return `<div class="card"><p class="muted">${t("cy_not_enough_data")}</p></div>`;
+  return `<div class="card">
+    <p>${t("cy_next_period", { date: fmtDate(stats.nextPeriod) })}</p>
+    <p>${t("cy_fertile_window", { start: fmtDate(stats.fertileStart), end: fmtDate(stats.fertileEnd) })}</p>
   </div>`;
 }
 
@@ -1298,14 +1432,30 @@ function renderCyclePhaseLegend() {
 
 function openDayModal(dateISO) {
   const events = Store.data.events.filter(e => e.date === dateISO);
+  const tasksDue = Store.data.tasks.filter(tk => tk.dueDate === dateISO);
+  const habitsDone = Store.data.habits.filter(h => (h.completedDates || []).includes(dateISO));
+  const journalEntry = Store.data.journalEntries.find(j => j.date === dateISO);
+  const wornOutfits = Store.data.outfits.filter(o => (o.wornLog || []).some(w => w.date === dateISO));
+  const phase = computeCyclePhase(dateISO);
+
   openModal(`
     <div class="modal-header"><h2>${fmtDate(dateISO)}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
+    ${phase !== "unknown" ? `<p class="muted">${t("cy_phase_" + phase)}</p>` : ""}
+
+    <h3 style="margin-top:10px">${t("tab_calendar")}</h3>
     ${events.length ? events.map(e => `
       <div class="list-row">
         <span>${e.time || ""} ${escapeHtml(e.title)}</span>
         <button class="icon-btn" data-action="delete-event" data-id="${e.id}">✕</button>
       </div>`).join("") : `<p class="muted">${t("cal_empty")}</p>`}
-    <button class="btn block" style="margin-top:12px" data-action="open-add-event" data-date="${dateISO}">${t("cal_add_event")}</button>
+    <button class="btn secondary block" style="margin-top:8px" data-action="open-add-event" data-date="${dateISO}">${t("cal_add_event")}</button>
+
+    ${tasksDue.length ? `<h3 style="margin-top:14px">${t("jr_tab_tasks")}</h3>${tasksDue.map(tk => `<div class="list-row"><span>${tk.icon || "📌"} ${escapeHtml(tk.title)}${tk.done ? " ✓" : ""}</span></div>`).join("")}` : ""}
+    ${habitsDone.length ? `<h3 style="margin-top:14px">${t("jr_tab_habits")}</h3>${habitsDone.map(h => `<div class="list-row"><span>${h.icon || "🔁"} ${escapeHtml(h.name)}</span></div>`).join("")}` : ""}
+    ${journalEntry ? `<h3 style="margin-top:14px">${t("jr_tab_diary")}</h3>
+      ${(journalEntry.photos || []).map(p => `<img src="${p}" style="width:100%;border-radius:10px;margin-bottom:6px">`).join("")}
+      <p>${escapeHtml(journalEntry.text)}</p>` : ""}
+    ${wornOutfits.length ? `<h3 style="margin-top:14px">${t("tab_outfits")}</h3>${wornOutfits.map(o => `<div class="list-row"><span>${escapeHtml(o.name)}</span></div>`).join("")}` : ""}
   `);
 }
 
@@ -1373,9 +1523,13 @@ function renderJournal() {
   if (isLocked("journal")) return renderLockScreen("jr_locked_msg");
   const views = ["diary", "tasks", "habits"];
   return `
-  <div class="chip-group" style="margin-bottom:12px">
-    ${views.map(v => `<span class="chip ${state.jrView === v ? "selected" : ""}" data-action="jr-set-view" data-view="${v}">${t("jr_tab_" + v)}</span>`).join("")}
+  <div class="row-between" style="gap:8px;margin-bottom:12px">
+    <div class="chip-group" style="flex:1">
+      ${views.map(v => `<span class="chip ${state.jrView === v ? "selected" : ""}" data-action="jr-set-view" data-view="${v}">${t("jr_tab_" + v)}</span>`).join("")}
+    </div>
+    ${state.jrView !== "diary" ? `<button class="icon-btn" data-action="st-toggle-filters" title="${t("st_filter_toggle")}">${state.stFiltersOpen ? "▲" : "▽"}</button>` : ""}
   </div>
+  ${state.stFiltersOpen && state.jrView !== "diary" ? renderStructuredFilterPanel() : ""}
   ${renderUpcomingAgenda()}
   ${state.jrView === "tasks" ? renderTasksView() : state.jrView === "habits" ? renderHabitsView() : renderDiaryView()}
   `;
@@ -1383,6 +1537,37 @@ function renderJournal() {
 
 function jrSetView(view) {
   state.jrView = view;
+  render();
+}
+
+function renderStructuredFilterPanel() {
+  const f = state.stFilter;
+  const projects = Array.from(new Set(Store.data.tasks.map(t => t.project).filter(Boolean)));
+  return `<div class="card" style="margin-bottom:10px">
+    <input type="text" placeholder="${t("st_filter_search_placeholder")}" value="${escapeHtml(f.q)}" oninput="state.stFilter.q=this.value; render();" style="margin-bottom:10px">
+    <div class="chip-group" style="margin-bottom:${projects.length ? "10px" : "0"}">
+      <span class="chip ${f.when === "today" ? "selected" : ""}" data-action="st-filter-when" data-when="today">${t("st_filter_today")}</span>
+      <span class="chip ${f.when === "upcoming" ? "selected" : ""}" data-action="st-filter-when" data-when="upcoming">${t("st_filter_upcoming")}</span>
+      <span class="chip ${f.when === "archive" ? "selected" : ""}" data-action="st-filter-when" data-when="archive">${t("st_filter_archive")}</span>
+    </div>
+    ${projects.length ? `
+    <p class="muted" style="font-size:11px;margin-bottom:4px">${t("st_projects_label")}</p>
+    <div class="chip-group">
+      ${projects.map(p => `<span class="chip ${f.project === p ? "selected" : ""}" data-action="st-filter-project" data-project="${escapeHtml(p)}">${escapeHtml(p)}</span>`).join("")}
+    </div>` : ""}
+  </div>`;
+}
+
+function stFilterWhen(when) {
+  state.stFilter.when = state.stFilter.when === when ? "" : when;
+  render();
+}
+function stFilterProject(project) {
+  state.stFilter.project = state.stFilter.project === project ? "" : project;
+  render();
+}
+function stToggleFilters() {
+  state.stFiltersOpen = !state.stFiltersOpen;
   render();
 }
 
@@ -1408,22 +1593,53 @@ function renderDiaryView() {
   <div id="jr-list">${renderJournalList_(filtered, !!state.jrQuery)}</div>`;
 }
 
+function tasksFiltered() {
+  const f = state.stFilter;
+  const today = todayISO();
+  let tasks = Store.data.tasks.slice();
+  if (f.q) { const q = f.q.toLowerCase(); tasks = tasks.filter(tk => tk.title.toLowerCase().includes(q) || (tk.project || "").toLowerCase().includes(q)); }
+  if (f.project) tasks = tasks.filter(tk => tk.project === f.project);
+  if (f.when === "today") tasks = tasks.filter(tk => tk.dueDate === today);
+  else if (f.when === "upcoming") tasks = tasks.filter(tk => tk.dueDate && tk.dueDate > today);
+  return tasks;
+}
+
 function renderTasksView() {
   const order = { high: 0, medium: 1, low: 2 };
-  const tasks = Store.data.tasks.slice().sort((a, b) => {
+  const tasks = tasksFiltered().sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1;
     return (order[a.priority] || 1) - (order[b.priority] || 1);
   });
-  return tasks.length ? tasks.map(tk => renderTaskCard(tk)).join("") : `<div class="empty-state"><span class="ico">✅</span>${t("task_empty")}</div>`;
+  return `
+  <button class="btn secondary block" style="margin-bottom:10px" data-action="tk-toggle-variety">📊 ${t("task_variety")}</button>
+  ${state.tkVarietyOpen ? renderTaskVarietyCard() : ""}
+  ${tasks.length ? tasks.map(tk => renderTaskCard(tk, state.stFilter.when === "archive")).join("") : `<div class="empty-state"><span class="ico">✅</span>${t("task_empty")}</div>`}
+  `;
 }
 
-function renderTaskCard(tk) {
+function renderTaskVarietyCard() {
+  const all = Store.data.tasks;
+  const byPriority = { high: 0, medium: 0, low: 0 };
+  all.forEach(tk => { byPriority[tk.priority || "medium"] = (byPriority[tk.priority || "medium"] || 0) + 1; });
+  const done = all.filter(tk => tk.done).length;
+  return `<div class="card">
+    <div class="stat-grid mb-0">
+      <div class="stat-card"><div class="num">${byPriority.high}</div><div class="label">${t("task_priority_high")}</div></div>
+      <div class="stat-card"><div class="num">${byPriority.medium}</div><div class="label">${t("task_priority_medium")}</div></div>
+      <div class="stat-card"><div class="num">${byPriority.low}</div><div class="label">${t("task_priority_low")}</div></div>
+      <div class="stat-card"><div class="num">${done}/${all.length}</div><div class="label">${t("task_archive_done")}</div></div>
+    </div>
+  </div>`;
+}
+
+function renderTaskCard(tk, showArchiveSymbol) {
   const color = tk.color || "var(--accent)";
   return `<div class="card" style="border-left:4px solid ${color}; opacity:${tk.done ? 0.6 : 1}">
     <div class="row-between">
-      <h3>${tk.icon || "📌"} ${escapeHtml(tk.title)}${tk.done ? " ✓" : ""}</h3>
+      <h3>${tk.icon || "📌"} ${escapeHtml(tk.title)}${showArchiveSymbol ? (tk.done ? " ✓" : " ✗") : (tk.done ? " ✓" : "")}</h3>
       <span class="badge">${t("task_priority_" + (tk.priority || "medium"))}</span>
     </div>
+    ${tk.project ? `<p class="muted">${t("task_project")}: ${escapeHtml(tk.project)}</p>` : ""}
     ${tk.dueDate ? `<p class="muted">${t("task_due_date")}: ${fmtDate(tk.dueDate)}</p>` : ""}
     ${tk.durationMinutes ? `<p class="muted">${tk.durationMinutes} min</p>` : ""}
     <div style="background:var(--surface-alt);border-radius:8px;height:8px;overflow:hidden;margin:8px 0">
@@ -1448,6 +1664,7 @@ function openTaskModal() {
       <div class="field"><label>${t("task_due_date")}</label><input type="date" id="f-tkdue"></div>
     </div>
     <div class="field"><label>${t("task_duration")}</label><input type="number" id="f-tkduration" min="0"></div>
+    <div class="field"><label>${t("task_project")} (${t("common_optional")})</label><input id="f-tkproject" placeholder="${t("task_project_placeholder")}"></div>
     <div class="field"><label>${t("task_icon")}</label>
       <div class="chip-group" id="tk-icon-row">${TASK_ICONS.map(ic => `<span class="chip" data-icon="${ic}">${ic}</span>`).join("")}</div>
     </div>
@@ -1483,6 +1700,7 @@ function saveTask() {
     priority: document.getElementById("f-tkpriority").value,
     dueDate: document.getElementById("f-tkdue").value || null,
     durationMinutes: parseInt(document.getElementById("f-tkduration").value, 10) || 0,
+    project: document.getElementById("f-tkproject").value.trim(),
     icon: window.__tkGetIcon ? window.__tkGetIcon() : "📌",
     color: window.__tkGetColor ? window.__tkGetColor() : "",
     progress: 0, done: false, createdAt: todayISO()
@@ -1513,12 +1731,36 @@ function deleteTask(id) {
   render();
 }
 
-function renderHabitsView() {
-  const habits = Store.data.habits;
-  return habits.length ? habits.map(h => renderHabitCard(h)).join("") : `<div class="empty-state"><span class="ico">🔁</span>${t("habit_empty")}</div>`;
+function habitsFiltered() {
+  const f = state.stFilter;
+  const today = todayISO();
+  let habits = Store.data.habits.slice();
+  if (f.q) { const q = f.q.toLowerCase(); habits = habits.filter(h => h.name.toLowerCase().includes(q)); }
+  if (f.when === "today") habits = habits.filter(h => !(h.completedDates || []).includes(today));
+  return habits;
 }
 
-function renderHabitCard(h) {
+function renderHabitsView() {
+  const habits = habitsFiltered();
+  return `
+  <button class="btn secondary block" style="margin-bottom:10px" data-action="hb-toggle-variety">📊 ${t("habit_variety")}</button>
+  ${state.hbVarietyOpen ? renderHabitVarietyCard() : ""}
+  ${habits.length ? habits.map(h => renderHabitCard(h, state.stFilter.when === "archive")).join("") : `<div class="empty-state"><span class="ico">🔁</span>${t("habit_empty")}</div>`}
+  `;
+}
+
+function renderHabitVarietyCard() {
+  const all = Store.data.habits;
+  const byCourse = {};
+  all.forEach(h => { const c = h.course || "daily"; byCourse[c] = (byCourse[c] || 0) + 1; });
+  return `<div class="card">
+    <div class="stat-grid mb-0">
+      ${Object.entries(byCourse).map(([c, n]) => `<div class="stat-card"><div class="num">${n}</div><div class="label">${t("habit_course_" + c)}</div></div>`).join("")}
+    </div>
+  </div>`;
+}
+
+function renderHabitCard(h, showArchiveSymbol) {
   const today = todayISO();
   const last7 = [];
   for (let i = 6; i >= 0; i--) last7.push(addDays(today, -i));
@@ -1527,11 +1769,13 @@ function renderHabitCard(h) {
   const doneThisWeek = last7.filter(d => done.includes(d)).length;
   const weekPct = Math.round((doneThisWeek / 7) * 100);
   const color = h.color || "var(--accent)";
+  const doneToday = done.includes(today);
   return `<div class="card">
     <div class="row-between">
-      <h3>${h.icon || "🔁"} ${escapeHtml(h.name)}</h3>
+      <h3>${h.icon || "🔁"} ${escapeHtml(h.name)}${showArchiveSymbol ? (doneToday ? " ✓" : " ✗") : ""}</h3>
       <button class="icon-btn" data-action="delete-habit" data-id="${h.id}">✕</button>
     </div>
+    ${h.course ? `<p class="muted">${t("habit_course")}: ${h.course === "custom" ? escapeHtml(h.courseCustom || "") : t("habit_course_" + h.course)}</p>` : ""}
     <p class="muted">${t("habit_streak", { n: streak })}</p>
     <div style="background:var(--surface-alt);border-radius:8px;height:8px;overflow:hidden;margin:8px 0">
       <div style="background:${color};height:100%;width:${weekPct}%"></div>
@@ -1555,6 +1799,12 @@ function openHabitModal() {
   openModal(`
     <div class="modal-header"><h2>${t("habit_add")}</h2><button class="icon-btn" data-action="close-modal">✕</button></div>
     <div class="field"><label>${t("habit_name")}</label><input id="f-hbname"></div>
+    <div class="field"><label>${t("habit_course")}</label>
+      <select id="f-hbcourse">
+        ${["daily", "weekly", "monthly", "summer", "custom"].map(c => `<option value="${c}">${t("habit_course_" + c)}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field hidden" id="hb-course-custom-wrap"><label>${t("habit_course")}</label><input id="f-hbcoursecustom" placeholder="${t("habit_course_custom_placeholder")}"></div>
     <div class="field"><label>${t("task_icon")}</label>
       <div class="chip-group" id="hb-icon-row">${TASK_ICONS.map(ic => `<span class="chip" data-icon="${ic}">${ic}</span>`).join("")}</div>
     </div>
@@ -1579,6 +1829,9 @@ function openHabitModal() {
       selColorHex = chip.getAttribute("data-color-hex");
     });
   });
+  document.getElementById("f-hbcourse").addEventListener("change", function () {
+    document.getElementById("hb-course-custom-wrap").classList.toggle("hidden", this.value !== "custom");
+  });
   window.__hbGetIcon = () => selIcon;
   window.__hbGetColor = () => selColorHex;
 }
@@ -1587,6 +1840,8 @@ function saveHabit() {
   const habit = {
     id: uid(),
     name: document.getElementById("f-hbname").value || "Habit",
+    course: document.getElementById("f-hbcourse").value,
+    courseCustom: document.getElementById("f-hbcoursecustom").value,
     icon: window.__hbGetIcon ? window.__hbGetIcon() : "🔁",
     color: window.__hbGetColor ? window.__hbGetColor() : "",
     completedDates: []

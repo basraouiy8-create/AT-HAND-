@@ -29,7 +29,8 @@ function defaultDB() {
     journalEntries: [],
     tasks: [],
     habits: [],
-    firedReminders: []
+    firedReminders: [],
+    shoppingList: []
   };
 }
 

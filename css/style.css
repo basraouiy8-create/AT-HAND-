@@ -11,10 +11,10 @@
   --success: #4c7a5e;
   --shadow: 0 2px 10px rgba(40, 30, 20, 0.08);
   --radius: 14px;
-  --cycle-menstrual: #d97a86;
+  --cycle-menstrual: #9b6bce;
   --cycle-follicular: #8fb996;
-  --cycle-ovulation: #e2b64a;
-  --cycle-luteal: #9b8bc4;
+  --cycle-ovulation: #e2574c;
+  --cycle-luteal: #e2b64a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -239,6 +239,15 @@ textarea { resize: vertical; min-height: 70px; }
 input[type="checkbox"] { width: auto; }
 
 .chip-group { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-row-scroll {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+.chip-row-scroll .chip { flex-shrink: 0; }
 .chip {
   padding: 6px 12px;
   border-radius: 999px;
@@ -454,6 +463,8 @@ input[type="checkbox"] { width: auto; }
 .calendar-day.muted { opacity: 0.3; }
 .calendar-day.today { border: 2px solid var(--accent); }
 .calendar-day .evt-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); position: absolute; bottom: 4px; }
+.calendar-day .day-dots { position: absolute; bottom: 4px; display: flex; gap: 2px; }
+.calendar-day .day-dots span { width: 4px; height: 4px; border-radius: 50%; display: inline-block; }
 
 .month-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .month-nav .label { font-weight: 700; font-size: 15px; }
